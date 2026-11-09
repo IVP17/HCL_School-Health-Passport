@@ -1,5 +1,4 @@
- files: {
-"streamlit_app.py": `import sqlite3
+import sqlite3
 import streamlit as st
 
 # --- PAGE CONFIGURATION ---
