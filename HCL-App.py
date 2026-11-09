@@ -1,27 +1,4 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-    <meta
-      name="viewport"
-      content="width=device-width, initial-scale=1, shrink-to-fit=no"
-    />
-    <title>Stlite app</title>
-    <link
-      rel="stylesheet"
-      href="https://cdn.jsdelivr.net/npm/@stlite/browser@0.90.8/build/stlite.css"
-    />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module">
-import { mount } from "https://cdn.jsdelivr.net/npm/@stlite/browser@0.90.8/build/stlite.js"
-mount(
-  {
-    requirements: [],
-    entrypoint: "streamlit_app.py",
-    files: {
+ files: {
 "streamlit_app.py": `import sqlite3
 import streamlit as st
 
@@ -561,14 +538,4 @@ def main():
 
 
 if __name__ == "__main__":
-  main()`,
-
-},
-  },
-  document.getElementById("root")
-)
-
-    </script>
-  </body>
-  <!-- Generated from Stlite Sharing (https://edit.share.stlite.net/), and the source version is 9060cfe030c51a128829bc6f6b35dc9deac1477d -->
-</html>
+  main()
