@@ -1,3 +1,4 @@
+
 import sqlite3
 import streamlit as st
 
@@ -11,32 +12,32 @@ DB_NAME = "school_health.db"
 
 
 def get_connection():
-  return sqlite3.connect(DB_NAME, check_same_thread=False)
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 
 def generate_roll_id(roll_number, grade, section):
-  """Generates ID: gj_roll no._class.section (e.g., 'gj_14_6d')"""
-  return f"gj_{str(roll_number).strip()}_{grade}{section.lower()}"
+    """Generates ID: gj_roll no._class.section"""
+    return f"gj_{str(roll_number).strip()}_{grade}{section.lower()}"
 
 
 def init_db():
-  conn = get_connection()
-  cursor = conn.cursor()
+    conn = get_connection()
+    cursor = conn.cursor()
 
-  cursor.execute(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='students'"
-  )
-  table_exists = cursor.fetchone()
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='students'"
+    )
+    table_exists = cursor.fetchone()
 
-  if table_exists:
-    cursor.execute("PRAGMA table_info(students)")
-    columns = [col[1] for col in cursor.fetchall()]
-    if "roll_number" not in columns or "id_number" not in columns:
-      cursor.execute("DROP TABLE IF EXISTS students")
-      cursor.execute("DROP TABLE IF EXISTS messages")
-      cursor.execute("DROP TABLE IF EXISTS parents")
+    if table_exists:
+        cursor.execute("PRAGMA table_info(students)")
+        columns = [col[1] for col in cursor.fetchall()]
+        if "roll_number" not in columns or "id_number" not in columns:
+            cursor.execute("DROP TABLE IF EXISTS students")
+            cursor.execute("DROP TABLE IF EXISTS messages")
+            cursor.execute("DROP TABLE IF EXISTS parents")
 
-  cursor.execute("""
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS students (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             id_number TEXT UNIQUE,
@@ -52,7 +53,7 @@ def init_db():
         )
     """)
 
-  cursor.execute("""
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sender TEXT,
@@ -65,30 +66,34 @@ def init_db():
         )
     """)
 
-  cursor.execute("SELECT COUNT(*) FROM students")
-  if cursor.fetchone()[0] == 0:
-    initial_students = [
-        (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
-        (14, "Isha V Prasad", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
-        (15, "Noopura Nambiar", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
-        (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
-    ]
-    
-    for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
-      id_num = generate_roll_id(roll, grade, section)
-      cursor.execute(
-          """
-              INSERT OR IGNORE INTO students (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          """,
-          (id_num, roll, name, grade, section, blood, allergies, emergency, vax, meds),
-      )
+    cursor.execute("SELECT COUNT(*) FROM students")
+    if cursor.fetchone()[0] == 0:
+        initial_students = [
+            (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
+            (14, "Isha V Prasad", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
+            (15, "Noopura Nambiar", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
+            (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
+        ]
 
-  conn.commit()
-  conn.close()
+        for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
+            id_num = generate_roll_id(roll, grade, section)
+            cursor.execute(
+                """
+                INSERT OR IGNORE INTO students
+                (id_number, roll_number, name, grade, section, blood_group,
+                 allergies, emergency_contact, vaccination_history, medications)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (id_num, roll, name, grade, section, blood, allergies,
+                 emergency, vax, meds),
+            )
+
+    conn.commit()
+    conn.close()
 
 
 init_db()
+
 
 # --- DESIGN & STYLING ---
 st.markdown(
@@ -123,418 +128,790 @@ st.markdown(
         color: #3E3832;
     }
     </style>
-""",
+    """,
     unsafe_allow_html=True,
 )
 
+
 # --- SESSION STATE INITIALIZATION ---
 if "logged_in" not in st.session_state:
-  st.session_state.logged_in = False
+    st.session_state.logged_in = False
 if "user" not in st.session_state:
-  st.session_state.user = None
+    st.session_state.user = None
 if "nurse_selected_grade" not in st.session_state:
-  st.session_state.nurse_selected_grade = None
+    st.session_state.nurse_selected_grade = None
 if "nurse_selected_section" not in st.session_state:
-  st.session_state.nurse_selected_section = None
+    st.session_state.nurse_selected_section = None
 if "teacher_grade" not in st.session_state:
-  st.session_state.teacher_grade = 5
+    st.session_state.teacher_grade = 5
 if "teacher_section" not in st.session_state:
-  st.session_state.teacher_section = "A"
+    st.session_state.teacher_section = "A"
 
 
 # --- LOGIN PAGE ---
 def login_page():
-  st.markdown("<h1 style='text-align: center;'>🏥 School Health Passport</h1>", unsafe_allow_html=True)
-  st.markdown("<p style='text-align: center; color: #666;'>School Health & Wellness Portal</p>", unsafe_allow_html=True)
+    st.markdown(
+        "<h1 style='text-align: center;'>🏥 School Health Passport</h1>",
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        "<p style='text-align: center; color: #666;'>School Health & Wellness Portal</p>",
+        unsafe_allow_html=True
+    )
 
-  _, col2, _ = st.columns([1, 2, 1])
+    _, col2, _ = st.columns([1, 2, 1])
 
-  with col2:
-    st.markdown("### Sign In Portal")
-    with st.expander("ℹ️ Demo Accounts / Hints"):
-      st.markdown("""
-            **Nurse:** \`nurse@school.com\` / \`password123\`  
-            **Teacher:** \`teacher@school.com\` / \`password123\`  
-            **Parent:** Select **Parent** and enter your child's **Student ID** (e.g., \`gj_14_6d\`) directly to view their health passport.
+    with col2:
+        st.markdown("### Sign In Portal")
+        with st.expander("ℹ️ Demo Accounts / Hints"):
+            st.markdown("""
+                **Nurse:** `nurse@school.com` / `password123`  
+                **Teacher:** `teacher@school.com` / `password123`  
+                **Parent:** Select **Parent** and enter your child's
+                **Student ID** (e.g., `gj_14_6d`).
             """)
 
-    # Use a callback or session-state bound selectbox to prevent form caching issues
-    selected_role = st.selectbox("Select Role", ["Nurse", "Teacher", "Parent"], key="login_role_select")
+        selected_role = st.selectbox(
+            "Select Role",
+            ["Nurse", "Teacher", "Parent"],
+            key="login_role_select"
+        )
 
-    with st.form("login_form"):
-      if selected_role == "Parent":
-        student_id_input = st.text_input("Child's Student ID (e.g., gj_14_6d)", value="gj_14_6d")
-      else:
-        email = st.text_input("Email Address", value="nurse@school.com" if selected_role == "Nurse" else "teacher@school.com")
-        password = st.text_input("Password", type="password", value="password123")
+        with st.form("login_form"):
+            if selected_role == "Parent":
+                student_id_input = st.text_input(
+                    "Child's Student ID (e.g., gj_14_6d)",
+                    value="gj_14_6d"
+                )
+            else:
+                email = st.text_input(
+                    "Email Address",
+                    value="nurse@school.com" if selected_role == "Nurse"
+                    else "teacher@school.com"
+                )
+                password = st.text_input(
+                    "Password", type="password", value="password123"
+                )
 
-      submit = st.form_submit_button("Sign In")
+            submit = st.form_submit_button("Sign In")
 
-      if submit:
-        conn = get_connection()
-        if selected_role == "Nurse":
-          st.session_state.user = {"name": "School Nurse", "role": "Nurse", "email": email}
-          st.session_state.logged_in = True
-          st.rerun()
-        elif selected_role == "Teacher":
-          st.session_state.user = {"name": "Teacher Portal", "role": "Teacher", "email": email}
-          st.session_state.logged_in = True
-          st.rerun()
-        else:
-          # Parent login using Student ID
-          student_record = conn.execute("SELECT * FROM students WHERE id_number = ?", (student_id_input.strip().lower(),)).fetchone()
-          if student_record:
-            st.session_state.user = {
-                "name": f"Parent of {student_record[3]}", 
-                "role": "Parent", 
-                "child_id": student_record[1]
-            }
-            st.session_state.logged_in = True
-            st.rerun()
-          else:
-            st.error("Invalid Student ID. Please check your child's ID and try again.")
-        conn.close()
+            if submit:
+                conn = get_connection()
+
+                if selected_role == "Nurse":
+                    st.session_state.user = {
+                        "name": "School Nurse",
+                        "role": "Nurse",
+                        "email": email
+                    }
+                    st.session_state.logged_in = True
+                    st.rerun()
+
+                elif selected_role == "Teacher":
+                    st.session_state.user = {
+                        "name": "Teacher Portal",
+                        "role": "Teacher",
+                        "email": email
+                    }
+                    st.session_state.logged_in = True
+                    st.rerun()
+
+                else:
+                    student_record = conn.execute(
+                        "SELECT * FROM students WHERE id_number = ?",
+                        (student_id_input.strip().lower(),)
+                    ).fetchone()
+
+                    if student_record:
+                        st.session_state.user = {
+                            "name": f"Parent of {student_record[3]}",
+                            "role": "Parent",
+                            "child_id": student_record[1]
+                        }
+                        st.session_state.logged_in = True
+                        st.rerun()
+                    else:
+                        st.error(
+                            "Invalid Student ID. Please check your child's ID and try again."
+                        )
+
+                conn.close()
+
+
+# --- SHARED STUDENT SEARCH ---
+def render_student_search(conn, grade=None, section=None, key_prefix="search"):
+    """Search student records across all visible health-record fields."""
+    st.subheader("Search Student Records")
+    st.caption(
+        "Search by name, student ID, roll number, grade, section, "
+        "blood group, allergies, or other health details."
+    )
+
+    query = st.text_input(
+        "Search students",
+        placeholder="e.g. Isha, Grade 6, O+, peanuts, gj_14_6d",
+        key=f"{key_prefix}_query",
+    ).strip()
+
+    if not query:
+        st.info("Enter any student detail above to begin searching.")
+        return
+
+    pattern = f"%{query}%"
+    sql = """
+        SELECT * FROM students
+        WHERE (
+            name LIKE ? COLLATE NOCASE
+            OR id_number LIKE ? COLLATE NOCASE
+            OR CAST(roll_number AS TEXT) LIKE ? COLLATE NOCASE
+            OR CAST(grade AS TEXT) LIKE ? COLLATE NOCASE
+            OR section LIKE ? COLLATE NOCASE
+            OR blood_group LIKE ? COLLATE NOCASE
+            OR allergies LIKE ? COLLATE NOCASE
+            OR emergency_contact LIKE ? COLLATE NOCASE
+            OR vaccination_history LIKE ? COLLATE NOCASE
+            OR medications LIKE ? COLLATE NOCASE
+        )
+    """
+    params = [pattern] * 10
+
+    # Teachers can search only within their assigned class.
+    if grade is not None and section is not None:
+        sql += " AND grade = ? AND section = ?"
+        params.extend([grade, section])
+
+    sql += " ORDER BY grade, section, roll_number"
+    results = conn.execute(sql, params).fetchall()
+
+    if results:
+        st.success(f"Found {len(results)} matching student record(s).")
+
+        for student in results:
+            with st.expander(
+                f"Grade {student[4]}{student[5]} • Roll No. {student[2]} — "
+                f"{student[3]} (Blood Group: {student[6] or 'Not provided'})"
+            ):
+                st.markdown(f"""
+                - **Student ID:** `{student[1]}`
+                - **Name:** {student[3]}
+                - **Grade / Section:** {student[4]}{student[5]}
+                - **Blood Group:** {student[6] or 'Not provided'}
+                - **Allergies:** {student[7] or 'None recorded'}
+                - **Emergency Contact:** {student[8] or 'Not provided'}
+                - **Vaccinations:** {student[9] or 'Not provided'}
+                - **Medications:** {student[10] or 'None recorded'}
+                """)
+    else:
+        st.warning(
+            "No students matched your search. Try another name or detail."
+        )
 
 
 # --- NURSE DASHBOARD ---
 def nurse_dashboard():
-  st.markdown("## 🩺 Nurse Dashboard — Grades 1 to 12 Directory")
-  conn = get_connection()
+    st.markdown("## 🩺 Nurse Dashboard — Grades 1 to 12 Directory")
+    conn = get_connection()
 
-  tab1, tab2, tab3, tab4 = st.tabs([
-      "📋 Student Directory", 
-      "➕ Add Student Record", 
-      "📨 Inbox / View Messages", 
-      "✉️ Send Message"
-  ])
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "📋 Student Directory",
+        "➕ Add Student Record",
+        "🔎 Search Students",
+        "📨 Inbox & Messages"
+    ])
 
-  with tab1:
-    st.subheader("Select Grade (1 to 12)")
-    grades = list(range(1, 13))
-    for i in range(0, len(grades), 4):
-      row_grades = grades[i:i+4]
-      row_cols = st.columns(4)
-      for col_idx, g in enumerate(row_grades):
-        with row_cols[col_idx]:
-          if st.button(f"Grade {g}", key=f"grade_btn_{g}"):
-            st.session_state.nurse_selected_grade = g
-            st.session_state.nurse_selected_section = None
+    with tab1:
+        st.subheader("Select Grade (1 to 12)")
+        grades = list(range(1, 13))
 
-    if st.session_state.nurse_selected_grade is not None:
-      g = st.session_state.nurse_selected_grade
-      st.markdown(f"### Grade {g} — Select Section (A, B, C, D, E)")
-      sections = ["A", "B", "C", "D", "E"]
-      sec_cols = st.columns(5)
-      for idx, sec in enumerate(sections):
-        count = conn.execute("SELECT COUNT(*) FROM students WHERE grade = ? AND section = ?", (g, sec)).fetchone()[0]
-        with sec_cols[idx]:
-          if st.button(f"Sec {sec} ({count})", key=f"sec_btn_{g}_{sec}"):
-            st.session_state.nurse_selected_section = sec
+        for i in range(0, len(grades), 4):
+            row_grades = grades[i:i + 4]
+            row_cols = st.columns(4)
 
-      if st.session_state.nurse_selected_section is not None:
-        sec = st.session_state.nurse_selected_section
-        st.markdown(f"#### Students in Grade {g}{sec}")
-        students = conn.execute("SELECT * FROM students WHERE grade = ? AND section = ? ORDER BY roll_number ASC", (g, sec)).fetchall()
+            for col_idx, g in enumerate(row_grades):
+                with row_cols[col_idx]:
+                    if st.button(f"Grade {g}", key=f"grade_btn_{g}"):
+                        st.session_state.nurse_selected_grade = g
+                        st.session_state.nurse_selected_section = None
 
-        if students:
-          for s in students:
-            with st.expander(f"Roll No. {s[2]} — {s[3]} (ID: \`{s[1]}\`)") :
-              st.markdown(f"""
-                - **Student ID:** \`{s[1]}\`
-                - **Roll Number:** {s[2]}
-                - **Blood Group:** {s[6]}
-                - **Allergies:** {s[7]}
-                - **Emergency Contact:** {s[8]}
-                - **Vaccinations:** {s[9]}
-                - **Medications:** {s[10]}
-                """)
-              if st.button("Remove Student (Left School)", key=f"nurse_rem_{s[0]}"):
-                conn.execute("DELETE FROM students WHERE id = ?", (s[0],))
-                conn.commit()
-                st.success(f"Removed {s[3]}")
-                st.rerun()
-        else:
-          st.info(f"No students registered in Grade {g}{sec}.")
-
-  with tab2:
-    st.subheader("Add Student Health Record")
-    with st.form("add_student_form"):
-      s_name = st.text_input("Student Name (e.g., Isha V Prasad)")
-      col_r, col_g, col_s = st.columns(3)
-      with col_r:
-        s_roll = st.number_input("Roll Number", min_value=1, step=1, value=1)
-      with col_g:
-        s_grade = st.selectbox("Grade", list(range(1, 13)))
-      with col_s:
-        s_section = st.selectbox("Section", ["A", "B", "C", "D", "E"])
-      
-      s_blood = st.text_input("Blood Group")
-      s_emergency = st.text_input("Emergency Contact")
-      s_allergies = st.text_area("Allergies")
-      s_vax = st.text_area("Vaccination History")
-      s_meds = st.text_area("Medications")
-
-      if st.form_submit_button("Save Student Record"):
-        if s_name:
-          s_id_num = generate_roll_id(s_roll, s_grade, s_section)
-          try:
-            conn.execute(
-                """
-                  INSERT INTO students (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              """,
-                (s_id_num, s_roll, s_name, s_grade, s_section, s_blood, s_allergies, s_emergency, s_vax, s_meds),
+        if st.session_state.nurse_selected_grade is not None:
+            g = st.session_state.nurse_selected_grade
+            st.markdown(
+                f"### Grade {g} — Select Section (A, B, C, D, E)"
             )
-            conn.commit()
-            st.success(f"Added {s_name} with ID \`{s_id_num}\` to Grade {s_grade}{s_section}!")
-            st.rerun()
-          except sqlite3.IntegrityError:
-            st.error(f"Error: Roll number {s_roll} already exists in Grade {s_grade}{s_section}.")
+
+            sections = ["A", "B", "C", "D", "E"]
+            sec_cols = st.columns(5)
+
+            for idx, sec in enumerate(sections):
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM students WHERE grade = ? AND section = ?",
+                    (g, sec)
+                ).fetchone()[0]
+
+                with sec_cols[idx]:
+                    if st.button(
+                        f"Sec {sec} ({count})",
+                        key=f"sec_btn_{g}_{sec}"
+                    ):
+                        st.session_state.nurse_selected_section = sec
+
+            if st.session_state.nurse_selected_section is not None:
+                sec = st.session_state.nurse_selected_section
+                st.markdown(f"#### Students in Grade {g}{sec}")
+
+                students = conn.execute(
+                    """
+                    SELECT * FROM students
+                    WHERE grade = ? AND section = ?
+                    ORDER BY roll_number ASC
+                    """,
+                    (g, sec)
+                ).fetchall()
+
+                if students:
+                    for student in students:
+                        with st.expander(
+                            f"Roll No. {student[2]} — {student[3]} "
+                            f"(ID: `{student[1]}`)"
+                        ):
+                            st.markdown(f"""
+                                - **Student ID:** `{student[1]}`
+                                - **Roll Number:** {student[2]}
+                                - **Blood Group:** {student[6]}
+                                - **Allergies:** {student[7]}
+                                - **Emergency Contact:** {student[8]}
+                                - **Vaccinations:** {student[9]}
+                                - **Medications:** {student[10]}
+                            """)
+
+                            if st.button(
+                                "Remove Student (Left School)",
+                                key=f"nurse_rem_{student[0]}"
+                            ):
+                                conn.execute(
+                                    "DELETE FROM students WHERE id = ?",
+                                    (student[0],)
+                                )
+                                conn.commit()
+                                st.success(f"Removed {student[3]}")
+                                st.rerun()
+                else:
+                    st.info(
+                        f"No students registered in Grade {g}{sec}."
+                    )
+
+    # ADD STUDENT TAB
+    with tab2:
+        st.subheader("Add Student Health Record")
+
+        with st.form("add_student_form"):
+            s_name = st.text_input("Student Name")
+
+            col_r, col_g, col_s = st.columns(3)
+
+            with col_r:
+                s_roll = st.number_input(
+                    "Roll Number", min_value=1, step=1, value=1
+                )
+
+            with col_g:
+                s_grade = st.selectbox("Grade", list(range(1, 13)))
+
+            with col_s:
+                s_section = st.selectbox(
+                    "Section", ["A", "B", "C", "D", "E"]
+                )
+
+            s_blood = st.text_input("Blood Group")
+            s_emergency = st.text_input("Emergency Contact")
+            s_allergies = st.text_area("Allergies")
+            s_vax = st.text_area("Vaccination History")
+            s_meds = st.text_area("Medications")
+
+            if st.form_submit_button("Save Student Record"):
+                if s_name.strip():
+                    s_id_num = generate_roll_id(
+                        s_roll, s_grade, s_section
+                    )
+
+                    try:
+                        conn.execute(
+                            """
+                            INSERT INTO students
+                            (id_number, roll_number, name, grade, section,
+                             blood_group, allergies, emergency_contact,
+                             vaccination_history, medications)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                s_id_num, s_roll, s_name.strip(),
+                                s_grade, s_section, s_blood,
+                                s_allergies, s_emergency, s_vax, s_meds
+                            ),
+                        )
+                        conn.commit()
+                        st.success(
+                            f"Added {s_name} with ID `{s_id_num}` "
+                            f"to Grade {s_grade}{s_section}!"
+                        )
+                        st.rerun()
+
+                    except sqlite3.IntegrityError:
+                        st.error(
+                            f"Error: Roll number {s_roll} already exists "
+                            f"in Grade {s_grade}{s_section}."
+                        )
+                else:
+                    st.error("Student Name is required.")
+
+    # SEARCH STUDENTS TAB
+    with tab3:
+        render_student_search(
+            conn,
+            key_prefix="nurse_student_search"
+        )
+
+    # INBOX AND MESSAGES TAB
+    with tab4:
+        st.subheader("Inbox")
+
+        nurse_messages = conn.execute(
+            """
+            SELECT sender, grade, section, target, student_name,
+                   message, date
+            FROM messages
+            WHERE target IN ('Nurse', 'All')
+            ORDER BY id DESC
+            """
+        ).fetchall()
+
+        if nurse_messages:
+            for message in nurse_messages:
+                with st.container():
+                    st.markdown(
+                        f"**From:** {message[0]} · "
+                        f"**Grade:** {message[1]}{message[2]} · "
+                        f"**Student:** {message[4]} · "
+                        f"**Date:** {message[6]}"
+                    )
+                    st.markdown(f"**Message:** {message[5]}")
+                    st.caption(f"Sent to: {message[3]}")
+                    st.divider()
         else:
-          st.error("Student Name is required.")
+            st.info("Your inbox is empty.")
 
-  with tab3:
-    st.subheader("Messages & Alerts")
-    messages = conn.execute("SELECT sender, grade, section, target, student_name, message, date FROM messages").fetchall()
-    if messages:
-      for m in messages:
-        st.markdown(f"""
-            **From:** {m[0]} (Grade {m[1]}{m[2]}) | **Target:** {m[3]} | **Student:** {m[4]} | **Date:** {m[6]}  
-            **Message:** {m[5]}
-            """)
-    else:
-      st.info("No messages received.")
+        with st.expander("✉️ Compose a Message", expanded=False):
+            sel_g = st.selectbox(
+                "Grade",
+                list(range(1, 13)),
+                key="nurse_msg_grade"
+            )
+            sel_sec = st.selectbox(
+                "Section",
+                ["A", "B", "C", "D", "E"],
+                key="nurse_msg_sec"
+            )
 
-  with tab4:
-    st.subheader("Send Message to Parent, Teacher, or All")
-    sel_g = st.selectbox("Filter Grade for Student", list(range(1, 13)), key="nurse_msg_grade")
-    sel_sec = st.selectbox("Filter Section", ["A", "B", "C", "D", "E"], key="nurse_msg_sec")
-    
-    students_in_class = conn.execute("SELECT name FROM students WHERE grade = ? AND section = ?", (sel_g, sel_sec)).fetchall()
-    student_names = [s[0] for s in students_in_class]
+            students_in_class = conn.execute(
+                """
+                SELECT name FROM students
+                WHERE grade = ? AND section = ?
+                ORDER BY name
+                """,
+                (sel_g, sel_sec)
+            ).fetchall()
 
-    with st.form("nurse_send_msg_form"):
-      target_student = st.selectbox("Select Student", student_names if student_names else ["No students available in this class"])
-      target_audience = st.selectbox("Send To", ["Parent", "Teacher", "All"])
-      msg_text = st.text_area("Message / Note")
-      
-      if st.form_submit_button("Send Message"):
-        if target_student and target_student != "No students available in this class":
-          conn.execute(
-              """
-                INSERT INTO messages (sender, grade, section, target, student_name, message, date)
-                VALUES (?, ?, ?, ?, ?, ?, date('now'))
-            """,
-              ("School Nurse", sel_g, sel_sec, target_audience, target_student, msg_text),
-          )
-          conn.commit()
-          st.success(f"Message sent to {target_audience} successfully!")
-        else:
-          st.error("Please select a valid student.")
+            student_names = [student[0] for student in students_in_class]
 
-  conn.close()
+            with st.form("nurse_send_msg_form"):
+                target_student = st.selectbox(
+                    "Select Student",
+                    student_names if student_names
+                    else ["No students available"]
+                )
+
+                target_audience = st.selectbox(
+                    "Send To",
+                    ["Parent", "Teacher", "All"]
+                )
+
+                msg_text = st.text_area("Message / Note")
+
+                if st.form_submit_button("Send Message"):
+                    if target_student == "No students available":
+                        st.error("There are no students in this class.")
+
+                    elif not msg_text.strip():
+                        st.error("Please enter a message before sending.")
+
+                    else:
+                        conn.execute(
+                            """
+                            INSERT INTO messages
+                            (sender, grade, section, target,
+                             student_name, message, date)
+                            VALUES (?, ?, ?, ?, ?, ?, date('now'))
+                            """,
+                            (
+                                "School Nurse", sel_g, sel_sec,
+                                target_audience, target_student,
+                                msg_text.strip()
+                            ),
+                        )
+                        conn.commit()
+                        st.success(
+                            f"Message sent to {target_audience} successfully!"
+                        )
+                        st.rerun()
+
+    conn.close()
 
 
 # --- TEACHER DASHBOARD ---
 def teacher_dashboard():
-  st.markdown("## 📚 Teacher Dashboard — Class Roster & Health Records")
-  
-  with st.container():
-    st.markdown("### ⚙️ Select Your Assigned Class")
-    col1, col2 = st.columns(2)
-    with col1:
-      selected_grade = st.selectbox("Select Grade", list(range(1, 13)), index=st.session_state.teacher_grade - 1, key="t_grade_sel")
-    with col2:
-      sections_list = ["A", "B", "C", "D", "E"]
-      selected_section = st.selectbox("Select Section", sections_list, index=sections_list.index(st.session_state.teacher_section), key="t_sec_sel")
-    
-    st.session_state.teacher_grade = selected_grade
-    st.session_state.teacher_section = selected_section
+    st.markdown(
+        "## 📚 Teacher Dashboard — Class Roster & Health Records"
+    )
 
-  grade = st.session_state.teacher_grade
-  section = st.session_state.teacher_section
-  
-  st.markdown(f"---")
-  st.markdown(f"### Currently Managing: **Grade {grade}{section}**")
+    with st.container():
+        st.markdown("### ⚙️ Select Your Assigned Class")
 
-  conn = get_connection()
-  tab1, tab2, tab3, tab4 = st.tabs([
-      "👥 Class Roster", 
-      "➕ Add/Remove Students", 
-      "📨 Send Message", 
-      "📥 Inbox / Received Messages"
-  ])
+        col1, col2 = st.columns(2)
 
-  with tab1:
-    st.subheader(f"Students in Grade {grade}{section}")
-    students = conn.execute("SELECT id_number, roll_number, name, blood_group, allergies, emergency_contact FROM students WHERE grade = ? AND section = ? ORDER BY roll_number ASC", (grade, section)).fetchall()
-
-    if students:
-      for s in students:
-        with st.expander(f"Roll No. {s[1]} — {s[2]} (ID: \`{s[0]}\` | Blood: {s[3]})"):
-          st.markdown(f"""
-                - **Student ID:** \`{s[0]}\`
-                - **Roll Number:** {s[1]}
-                - **Allergies:** {s[4]}
-                - **Emergency Contact:** {s[5]}
-                """)
-    else:
-      st.info(f"No students found in Grade {grade}{section}. Use the 'Add/Remove Students' tab to add your class list.")
-
-  with tab2:
-    st.subheader(f"Manage Students in Grade {grade}{section}")
-    with st.form("teacher_add_student"):
-      t_name = st.text_input("Student Name")
-      t_roll = st.number_input("Roll Number", min_value=1, step=1, value=1)
-      t_blood = st.text_input("Blood Group")
-      t_emergency = st.text_input("Emergency Contact")
-      t_allergies = st.text_area("Allergies")
-      t_vax = st.text_area("Vaccination History")
-      t_meds = st.text_area("Medications")
-
-      if st.form_submit_button("Add Student to My Class"):
-        if t_name:
-          t_id_num = generate_roll_id(t_roll, grade, section)
-          try:
-            conn.execute(
-                """
-                  INSERT INTO students (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-              """,
-                (t_id_num, t_roll, t_name, grade, section, t_blood, t_allergies, t_emergency, t_vax, t_meds),
+        with col1:
+            selected_grade = st.selectbox(
+                "Select Grade",
+                list(range(1, 13)),
+                index=st.session_state.teacher_grade - 1,
+                key="t_grade_sel"
             )
-            conn.commit()
-            st.success(f"Added {t_name} with ID \`{t_id_num}\` to Grade {grade}{section}!")
-            st.rerun()
-          except sqlite3.IntegrityError:
-            st.error(f"Error: Roll number {t_roll} already exists in Grade {grade}{section}.")
-        else:
-          st.error("Student Name is required.")
 
-    st.markdown("#### Remove Student from Roster")
-    students = conn.execute("SELECT id, name FROM students WHERE grade = ? AND section = ?", (grade, section)).fetchall()
-    if students:
-      s_dict = {s[1]: s[0] for s in students}
-      to_remove = st.selectbox("Select Student to Remove", list(s_dict.keys()))
-      if st.button("Remove Selected Student"):
-        conn.execute("DELETE FROM students WHERE id = ?", (s_dict[to_remove],))
-        conn.commit()
-        st.success(f"Removed {to_remove}")
-        st.rerun()
+        with col2:
+            sections_list = ["A", "B", "C", "D", "E"]
+            selected_section = st.selectbox(
+                "Select Section",
+                sections_list,
+                index=sections_list.index(
+                    st.session_state.teacher_section
+                ),
+                key="t_sec_sel"
+            )
 
-  with tab3:
-    st.subheader("Send Message to Nurse / Parent / All")
-    students = conn.execute("SELECT name FROM students WHERE grade = ? AND section = ?", (grade, section)).fetchall()
-    student_names = [s[0] for s in students]
+        st.session_state.teacher_grade = selected_grade
+        st.session_state.teacher_section = selected_section
 
-    with st.form("teacher_msg_form"):
-      target_student = st.selectbox("Select Student", student_names if student_names else ["No students available"])
-      target_audience = st.selectbox("Send To", ["Nurse", "Parent", "All"])
-      msg_text = st.text_area("Message / Note")
-      
-      if st.form_submit_button("Send Message"):
-        if target_student and target_student != "No students available":
-          conn.execute(
-              """
-                INSERT INTO messages (sender, grade, section, target, student_name, message, date)
-                VALUES (?, ?, ?, ?, ?, ?, date('now'))
+    grade = st.session_state.teacher_grade
+    section = st.session_state.teacher_section
+
+    st.markdown("---")
+    st.markdown(
+        f"### Currently Managing: **Grade {grade}{section}**"
+    )
+
+    conn = get_connection()
+
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "👥 Class Roster",
+        "➕ Add/Remove Students",
+        "🔎 Search Students",
+        "📨 Inbox & Messages"
+    ])
+
+    # CLASS ROSTER TAB
+    with tab1:
+        st.subheader(f"Students in Grade {grade}{section}")
+
+        students = conn.execute(
+            """
+            SELECT id_number, roll_number, name, blood_group,
+                   allergies, emergency_contact
+            FROM students
+            WHERE grade = ? AND section = ?
+            ORDER BY roll_number ASC
             """,
-              (f"Teacher (Grade {grade}{section})", grade, section, target_audience, target_student, msg_text),
-          )
-          conn.commit()
-          st.success(f"Message sent to {target_audience} successfully!")
+            (grade, section)
+        ).fetchall()
+
+        if students:
+            for student in students:
+                with st.expander(
+                    f"Roll No. {student[1]} — {student[2]} "
+                    f"(ID: `{student[0]}` | Blood: {student[3]})"
+                ):
+                    st.markdown(f"""
+                        - **Student ID:** `{student[0]}`
+                        - **Roll Number:** {student[1]}
+                        - **Allergies:** {student[4]}
+                        - **Emergency Contact:** {student[5]}
+                    """)
         else:
-          st.error("Please select a valid student.")
+            st.info(
+                f"No students found in Grade {grade}{section}. "
+                "Use the 'Add/Remove Students' tab to add your class list."
+            )
 
-  with tab4:
-    st.subheader(f"Messages Received for Grade {grade}{section}")
-    teacher_messages = conn.execute(
-        """
-        SELECT sender, target, student_name, message, date 
-        FROM messages 
-        WHERE grade = ? AND section = ? AND (target = 'Teacher' OR target = 'All')
-        """,
-        (grade, section)
-    ).fetchall()
+    # ADD / REMOVE STUDENTS TAB
+    with tab2:
+        st.subheader(f"Manage Students in Grade {grade}{section}")
 
-    if teacher_messages:
-      for tm in teacher_messages:
-        st.markdown(f"""
-            **From:** {tm[0]} | **Target Group:** {tm[1]} | **Student:** {tm[2]} | **Date:** {tm[4]}  
-            **Message:** {tm[3]}
-            """)
-    else:
-      st.info("No messages received for your class.")
+        with st.form("teacher_add_student"):
+            t_name = st.text_input("Student Name")
+            t_roll = st.number_input(
+                "Roll Number", min_value=1, step=1, value=1
+            )
+            t_blood = st.text_input("Blood Group")
+            t_emergency = st.text_input("Emergency Contact")
+            t_allergies = st.text_area("Allergies")
+            t_vax = st.text_area("Vaccination History")
+            t_meds = st.text_area("Medications")
 
-  conn.close()
+            if st.form_submit_button("Add Student to My Class"):
+                if t_name.strip():
+                    t_id_num = generate_roll_id(
+                        t_roll, grade, section
+                    )
+
+                    try:
+                        conn.execute(
+                            """
+                            INSERT INTO students
+                            (id_number, roll_number, name, grade, section,
+                             blood_group, allergies, emergency_contact,
+                             vaccination_history, medications)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                t_id_num, t_roll, t_name.strip(),
+                                grade, section, t_blood, t_allergies,
+                                t_emergency, t_vax, t_meds
+                            ),
+                        )
+                        conn.commit()
+                        st.success(
+                            f"Added {t_name} with ID `{t_id_num}` "
+                            f"to Grade {grade}{section}!"
+                        )
+                        st.rerun()
+
+                    except sqlite3.IntegrityError:
+                        st.error(
+                            f"Error: Roll number {t_roll} already exists "
+                            f"in Grade {grade}{section}."
+                        )
+                else:
+                    st.error("Student Name is required.")
+
+        st.markdown("#### Remove Student from Roster")
+
+        students_to_remove = conn.execute(
+            """
+            SELECT id, name FROM students
+            WHERE grade = ? AND section = ?
+            """,
+            (grade, section)
+        ).fetchall()
+
+        if students_to_remove:
+            student_options = {
+                student[1]: student[0]
+                for student in students_to_remove
+            }
+
+            to_remove = st.selectbox(
+                "Select Student to Remove",
+                list(student_options.keys())
+            )
+
+            if st.button("Remove Selected Student"):
+                conn.execute(
+                    "DELETE FROM students WHERE id = ?",
+                    (student_options[to_remove],)
+                )
+                conn.commit()
+                st.success(f"Removed {to_remove}")
+                st.rerun()
+
+    # SEARCH STUDENTS TAB
+    with tab3:
+        render_student_search(
+            conn,
+            grade=grade,
+            section=section,
+            key_prefix="teacher_student_search"
+        )
+
+    # INBOX AND MESSAGES TAB
+    with tab4:
+        st.subheader(f"Inbox — Grade {grade}{section}")
+
+        teacher_messages = conn.execute(
+            """
+            SELECT sender, target, student_name, message, date
+            FROM messages
+            WHERE grade = ? AND section = ?
+              AND target IN ('Teacher', 'All')
+            ORDER BY id DESC
+            """,
+            (grade, section)
+        ).fetchall()
+
+        if teacher_messages:
+            for message in teacher_messages:
+                with st.container():
+                    st.markdown(
+                        f"**From:** {message[0]} · "
+                        f"**Student:** {message[2]} · "
+                        f"**Date:** {message[4]}"
+                    )
+                    st.markdown(f"**Message:** {message[3]}")
+                    st.caption(f"Sent to: {message[1]}")
+                    st.divider()
+        else:
+            st.info("Your inbox is empty.")
+
+        with st.expander("✉️ Compose a Message", expanded=False):
+            students_in_class = conn.execute(
+                """
+                SELECT name FROM students
+                WHERE grade = ? AND section = ?
+                ORDER BY name
+                """,
+                (grade, section)
+            ).fetchall()
+
+            student_names = [student[0] for student in students_in_class]
+
+            with st.form("teacher_msg_form"):
+                target_student = st.selectbox(
+                    "Select Student",
+                    student_names if student_names
+                    else ["No students available"]
+                )
+
+                target_audience = st.selectbox(
+                    "Send To",
+                    ["Nurse", "Parent", "All"]
+                )
+
+                msg_text = st.text_area("Message / Note")
+
+                if st.form_submit_button("Send Message"):
+                    if target_student == "No students available":
+                        st.error("There are no students in your class.")
+
+                    elif not msg_text.strip():
+                        st.error("Please enter a message before sending.")
+
+                    else:
+                        conn.execute(
+                            """
+                            INSERT INTO messages
+                            (sender, grade, section, target,
+                             student_name, message, date)
+                            VALUES (?, ?, ?, ?, ?, ?, date('now'))
+                            """,
+                            (
+                                f"Teacher (Grade {grade}{section})",
+                                grade, section, target_audience,
+                                target_student, msg_text.strip()
+                            ),
+                        )
+                        conn.commit()
+                        st.success(
+                            f"Message sent to {target_audience} successfully!"
+                        )
+                        st.rerun()
+
+    conn.close()
 
 
 # --- PARENT DASHBOARD ---
 def parent_dashboard():
-  st.markdown("## 👨‍👩‍👧 Parent Health Passport Portal")
-  conn = get_connection()
+    st.markdown("## 👨‍👩‍👧 Parent Health Passport Portal")
+    conn = get_connection()
 
-  child_id = st.session_state.user["child_id"]
-  student = conn.execute("SELECT * FROM students WHERE id_number = ?", (child_id,)).fetchone()
+    child_id = st.session_state.user["child_id"]
 
-  if student:
-    st.markdown(f"### 📋 Health Passport for: **{student[3]}** (ID: \`{student[1]}\` | Roll No: {student[2]})")
-    st.markdown(f"""
-        - **Grade / Section:** Grade {student[4]}{student[5]}
-        - **Blood Group:** {student[6]}
-        - **Allergies:** {student[7]}
-        - **Emergency Contact:** {student[8]}
-        - **Vaccination History:** {student[9]}
-        - **Medications:** {student[10]}
+    student = conn.execute(
+        "SELECT * FROM students WHERE id_number = ?",
+        (child_id,)
+    ).fetchone()
+
+    if student:
+        st.markdown(
+            f"### 📋 Health Passport for: **{student[3]}** "
+            f"(ID: `{student[1]}` | Roll No: {student[2]})"
+        )
+
+        st.markdown(f"""
+            - **Grade / Section:** Grade {student[4]}{student[5]}
+            - **Blood Group:** {student[6]}
+            - **Allergies:** {student[7]}
+            - **Emergency Contact:** {student[8]}
+            - **Vaccination History:** {student[9]}
+            - **Medications:** {student[10]}
         """)
 
-    st.markdown("### 📨 Messages & Updates for This Child")
-    parent_messages = conn.execute(
-        """
-        SELECT sender, target, message, date 
-        FROM messages 
-        WHERE student_name = ? AND (target = 'Parent' OR target = 'All')
-        """,
-        (student[3],)
-    ).fetchall()
+        st.markdown("### 📨 Messages & Updates for This Child")
 
-    if parent_messages:
-      for pm in parent_messages:
-        st.markdown(f"""
-            **From:** {pm[0]} | **Audience:** {pm[1]} | **Date:** {pm[3]}  
-            **Message:** {pm[2]}
-            """)
+        parent_messages = conn.execute(
+            """
+            SELECT sender, target, message, date
+            FROM messages
+            WHERE student_name = ?
+              AND (target = 'Parent' OR target = 'All')
+            """,
+            (student[3],)
+        ).fetchall()
+
+        if parent_messages:
+            for pm in parent_messages:
+                st.markdown(f"""
+                    **From:** {pm[0]} |
+                    **Audience:** {pm[1]} |
+                    **Date:** {pm[3]}  
+                    **Message:** {pm[2]}
+                """)
+        else:
+            st.info("No messages for this student yet.")
+
     else:
-      st.info("No messages for this student yet.")
-  else:
-    st.error("Student record not found.")
+        st.error("Student record not found.")
 
-  conn.close()
+    conn.close()
 
 
 # --- MAIN ROUTER ---
 def main():
-  if not st.session_state.logged_in:
-    login_page()
-  else:
-    st.sidebar.markdown(f"**User:** {st.session_state.user['name']}")
-    st.sidebar.markdown(f"**Role:** {st.session_state.user['role']}")
-    if st.sidebar.button("Logout"):
-      st.session_state.logged_in = False
-      st.session_state.user = None
-      st.session_state.nurse_selected_grade = None
-      st.session_state.nurse_selected_section = None
-      st.rerun()
+    if not st.session_state.logged_in:
+        login_page()
 
-    st.sidebar.markdown("---")
-    role = st.session_state.user["role"]
-    if role == "Nurse":
-      nurse_dashboard()
-    elif role == "Teacher":
-      teacher_dashboard()
-    elif role == "Parent":
-      parent_dashboard()
+    else:
+        st.sidebar.markdown(
+            f"**User:** {st.session_state.user['name']}"
+        )
+        st.sidebar.markdown(
+            f"**Role:** {st.session_state.user['role']}"
+        )
+
+        if st.sidebar.button("Logout"):
+            st.session_state.logged_in = False
+            st.session_state.user = None
+            st.session_state.nurse_selected_grade = None
+            st.session_state.nurse_selected_section = None
+            st.rerun()
+
+        st.sidebar.markdown("---")
+
+        role = st.session_state.user["role"]
+
+        if role == "Nurse":
+            nurse_dashboard()
+        elif role == "Teacher":
+            teacher_dashboard()
+        elif role == "Parent":
+            parent_dashboard()
 
 
 if __name__ == "__main__":
-  main()
+    main()
