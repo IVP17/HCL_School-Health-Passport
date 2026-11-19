@@ -75,10 +75,10 @@ def init_db():
   cursor.execute("SELECT COUNT(*) FROM students")
   if cursor.fetchone()[0] == 0:
     initial_students = [
-        (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
-        (14, "Isha V Prasad", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
-        (15, "Noopura Nambiar", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
-        (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
+        (1, "Kabir Malhotra", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
+        (14, "Diya Mehta", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
+        (15, "Meera Iyer", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
+        (3, "Rohan Kapoor", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
     ]
     
     for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
@@ -261,7 +261,7 @@ def render_student_search(conn, grade=None, section=None, key_prefix="search"):
 
   query = st.text_input(
       "Search students",
-      placeholder="e.g. Isha, Grade 6, O+, peanuts, gj_14_6d",
+      placeholder="e.g. Diya, Grade 6, O+, peanuts, gj_14_6d",
       key=f"{key_prefix}_query",
   ).strip()
 
@@ -316,7 +316,6 @@ def render_student_search(conn, grade=None, section=None, key_prefix="search"):
           - **Vaccinations:** {student[9] or 'Not provided'}
           - **Medications:** {student[10] or 'None recorded'}
           """)
-          render_student_editor(conn, student, key_prefix)
   else:
     st.warning("No students matched your search. Try another name or detail.")
 
@@ -398,7 +397,7 @@ def nurse_dashboard():
                   - **Vaccinations:** {student[9]}
                   - **Medications:** {student[10]}
                 """)
-                render_student_editor(conn, student, "nurse")
+              render_student_editor(conn, student, "nurse")
               if st.button("Remove Student (Left School)", key=f"nurse_rem_{student[0]}"):
                 conn.execute("DELETE FROM students WHERE id = ?", (student[0],))
                 conn.commit()
@@ -410,7 +409,7 @@ def nurse_dashboard():
   with tab2:
     st.subheader("Add Student Health Record")
     with st.form("add_student_form"):
-      s_name = st.text_input("Student Name (e.g., Isha V Prasad)")
+      s_name = st.text_input("Student Name (e.g., Diya Mehta)")
       col_r, col_g, col_s = st.columns(3)
       with col_r:
         s_roll = st.number_input("Roll Number", min_value=1, step=1, value=1)
