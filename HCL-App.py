@@ -15,7 +15,7 @@ def get_connection():
 
 
 def generate_roll_id(roll_number, grade, section):
-  """Generates ID: gj_roll no._class.section (e.g., 'gj_14_6d')"""
+  """Generates ID: gj_roll no._class.section (e.g., 'gj_12_6b')"""
   return f"gj_{str(roll_number).strip()}_{grade}{section.lower()}"
 
 
@@ -72,50 +72,51 @@ def init_db():
         )
     """)
 
+  # Fictional demo records. All fields are intentionally different from the
+  # original sample data so the displayed demo profiles are fully refreshed.
   initial_students = [
-      (1, "Kabir Malhotra", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
-      (14, "Diya Mehta", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
-      (15, "Meera Iyer", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
-      (3, "Rohan Kapoor", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
+      (8, "Kabir Malhotra", 5, "C", "A+", "None recorded", "DEMO-EMERGENCY-001", "Dose records up to date (demo)", "None recorded"),
+      (12, "Diya Mehta", 6, "B", "B-", "Pollen (demo)", "DEMO-EMERGENCY-002", "Booster due (demo)", "None recorded"),
+      (18, "Meera Iyer", 7, "A", "AB+", "None recorded", "DEMO-EMERGENCY-003", "Records pending verification (demo)", "None recorded"),
+      (6, "Rohan Kapoor", 4, "C", "O-", "Dust (demo)", "DEMO-EMERGENCY-004", "Dose records up to date (demo)", "None recorded"),
   ]
 
-  cursor.execute("SELECT COUNT(*) FROM students")
-  if cursor.fetchone()[0] == 0:
-    for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
-      id_num = generate_roll_id(roll, grade, section)
-      cursor.execute(
-          """
-              INSERT OR IGNORE INTO students (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          """,
-          (id_num, roll, name, grade, section, blood, allergies, emergency, vax, meds),
-      )
-
-  # Rename the existing built-in demo students in-place. Match by class and
-  # roll number (not only id_number), because older app versions may have
-  # stored a different ID format. This prevents old and new demo names from
-  # appearing as separate students. Existing health details/photos are kept.
-  old_demo_names = {
-      "Aarav Sharma", "Isha V Prasad", "Noopura Nambiar", "Ananya Rao",
-      "Kabir Malhotra", "Diya Mehta", "Meera Iyer", "Rohan Kapoor",
-  }
-  for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
+  # Identify the original built-in demo rows by their old names, their newer
+  # demo names, or their original class/roll combinations. Then update every
+  # field in place (including roll, grade, section, ID and health details).
+  # This preserves each row's primary key and uploaded photo.
+  old_demo_names = ["Aarav Sharma", "Isha V Prasad", "Noopura Nambiar", "Ananya Rao"]
+  new_demo_names = ["Kabir Malhotra", "Diya Mehta", "Meera Iyer", "Rohan Kapoor"]
+  original_demo_positions = [(1, 5, "A"), (14, 6, "D"), (15, 6, "D"), (3, 3, "B")]
+  for index, (roll, name, grade, section, blood, allergies, emergency, vax, meds) in enumerate(initial_students):
+    old_roll, old_grade, old_section = original_demo_positions[index]
+    old_name = old_demo_names[index]
+    new_name = new_demo_names[index]
     cursor.execute(
-        "SELECT id, name, photo FROM students WHERE roll_number = ? AND grade = ? AND section = ? ORDER BY id",
-        (roll, grade, section),
+        """SELECT id, name, photo FROM students
+           WHERE name IN (?, ?)
+              OR (roll_number = ? AND grade = ? AND section = ?)
+           ORDER BY id""",
+        (old_name, new_name, old_roll, old_grade, old_section),
     )
     matches = cursor.fetchall()
+    id_num = generate_roll_id(roll, grade, section)
+
     if matches:
-      # Keep the first matching row as the canonical record. If an earlier
-      # version created a duplicate demo row, preserve its photo if needed
-      # and remove only duplicate rows belonging to this known demo set.
       canonical_id = matches[0][0]
       cursor.execute(
-          "UPDATE students SET name = ?, id_number = ? WHERE id = ?",
-          (name, generate_roll_id(roll, grade, section), canonical_id),
+          """UPDATE students
+             SET id_number=?, roll_number=?, name=?, grade=?, section=?,
+                 blood_group=?, allergies=?, emergency_contact=?,
+                 vaccination_history=?, medications=?
+             WHERE id=?""",
+          (id_num, roll, name, grade, section, blood, allergies, emergency,
+           vax, meds, canonical_id),
       )
+      # Remove only extra rows that are recognisable as these built-in demo
+      # records; retain any unrelated student records.
       for duplicate_id, duplicate_name, duplicate_photo in matches[1:]:
-        if duplicate_name in old_demo_names:
+        if duplicate_name in (old_name, new_name):
           if duplicate_photo:
             cursor.execute(
                 "UPDATE students SET photo = COALESCE(photo, ?) WHERE id = ?",
@@ -123,13 +124,11 @@ def init_db():
             )
           cursor.execute("DELETE FROM students WHERE id = ?", (duplicate_id,))
     else:
-      id_num = generate_roll_id(roll, grade, section)
       cursor.execute(
-          """
-          INSERT OR IGNORE INTO students
-          (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          """,
+          """INSERT OR IGNORE INTO students
+             (id_number, roll_number, name, grade, section, blood_group,
+              allergies, emergency_contact, vaccination_history, medications)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
           (id_num, roll, name, grade, section, blood, allergies, emergency, vax, meds),
       )
 
@@ -204,7 +203,7 @@ def login_page():
       st.markdown("""
             **Nurse:** \`nurse@school.com\` / \`password123\`  
             **Teacher:** \`teacher@school.com\` / \`password123\`  
-            **Parent:** Select **Parent** and enter your child's **Student ID** (e.g., \`gj_14_6d\`) directly to view their health passport.
+            **Parent:** Select **Parent** and enter your child's **Student ID** (e.g., \`gj_12_6b\`) directly to view their health passport.
             """)
 
     # Use a callback or session-state bound selectbox to prevent form caching issues
@@ -212,7 +211,7 @@ def login_page():
 
     with st.form("login_form"):
       if selected_role == "Parent":
-        student_id_input = st.text_input("Child's Student ID (e.g., gj_14_6d)", value="gj_14_6d")
+        student_id_input = st.text_input("Child's Student ID (e.g., gj_12_6b)", value="gj_12_6b")
       else:
         email = st.text_input("Email Address", value="nurse@school.com" if selected_role == "Nurse" else "teacher@school.com")
         password = st.text_input("Password", type="password", value="password123")
@@ -303,7 +302,7 @@ def render_student_search(conn, grade=None, section=None, key_prefix="search"):
 
   query = st.text_input(
       "Search students",
-      placeholder="e.g. Diya, Grade 6, O+, peanuts, gj_14_6d",
+      placeholder="e.g. Diya, Grade 6, B-, pollen, gj_12_6b",
       key=f"{key_prefix}_query",
   ).strip()
 
@@ -451,7 +450,7 @@ def nurse_dashboard():
   with tab2:
     st.subheader("Add Student Health Record")
     with st.form("add_student_form"):
-      s_name = st.text_input("Student Name (e.g., Diya Mehta)")
+      s_name = st.text_input("Student Name (e.g., Kabir Malhotra)")
       col_r, col_g, col_s = st.columns(3)
       with col_r:
         s_roll = st.number_input("Roll Number", min_value=1, step=1, value=1)
