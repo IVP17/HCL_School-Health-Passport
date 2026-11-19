@@ -211,6 +211,48 @@ def show_student_photo(photo, caption="Student photo"):
     st.caption("No student photo uploaded yet.")
 
 
+# --- STUDENT RECORD EDITOR ---
+def render_student_editor(conn, student, key_prefix="edit"):
+  """Show a pre-filled edit form for an authorised staff member."""
+  with st.expander("✏️ Edit Student Health Record"):
+    with st.form(f"{key_prefix}_student_form_{student[0]}"):
+      edit_name = st.text_input("Student Name", value=student[3] or "")
+      edit_blood = st.text_input("Blood Group", value=student[6] or "")
+      edit_allergies = st.text_area("Allergies", value=student[7] or "")
+      edit_emergency = st.text_input("Emergency Contact", value=student[8] or "")
+      edit_vax = st.text_area("Vaccination History", value=student[9] or "")
+      edit_meds = st.text_area("Medications", value=student[10] or "")
+      edit_photo = st.file_uploader(
+          "Replace Student Photo (optional)",
+          type=["jpg", "jpeg", "png", "webp"],
+          key=f"{key_prefix}_edit_photo_{student[0]}"
+      )
+      submitted = st.form_submit_button("Save Changes")
+      if submitted:
+        if not edit_name.strip():
+          st.error("Student name is required.")
+        elif edit_photo:
+          conn.execute(
+              """UPDATE students SET name=?, blood_group=?, allergies=?,
+                 emergency_contact=?, vaccination_history=?, medications=?, photo=? WHERE id=?""",
+              (edit_name.strip(), edit_blood, edit_allergies, edit_emergency,
+               edit_vax, edit_meds, edit_photo.getvalue(), student[0])
+          )
+          conn.commit()
+          st.success("Student health record and photo updated.")
+          st.rerun()
+        else:
+          conn.execute(
+              """UPDATE students SET name=?, blood_group=?, allergies=?,
+                 emergency_contact=?, vaccination_history=?, medications=? WHERE id=?""",
+              (edit_name.strip(), edit_blood, edit_allergies, edit_emergency,
+               edit_vax, edit_meds, student[0])
+          )
+          conn.commit()
+          st.success("Student health record updated.")
+          st.rerun()
+
+
 # --- SHARED STUDENT SEARCH ---
 def render_student_search(conn, grade=None, section=None, key_prefix="search"):
   """Search student records across all visible health-record fields."""
@@ -274,6 +316,7 @@ def render_student_search(conn, grade=None, section=None, key_prefix="search"):
           - **Vaccinations:** {student[9] or 'Not provided'}
           - **Medications:** {student[10] or 'None recorded'}
           """)
+          render_student_editor(conn, student, key_prefix)
   else:
     st.warning("No students matched your search. Try another name or detail.")
 
@@ -355,6 +398,7 @@ def nurse_dashboard():
                   - **Vaccinations:** {student[9]}
                   - **Medications:** {student[10]}
                 """)
+                render_student_editor(conn, student, "nurse")
               if st.button("Remove Student (Left School)", key=f"nurse_rem_{student[0]}"):
                 conn.execute("DELETE FROM students WHERE id = ?", (student[0],))
                 conn.commit()
@@ -512,8 +556,7 @@ def teacher_dashboard():
     st.subheader(f"Students in Grade {grade}{section}")
     students = conn.execute(
         """
-        SELECT id_number, roll_number, name, blood_group, allergies, emergency_contact, photo
-        FROM students WHERE grade = ? AND section = ?
+        SELECT * FROM students WHERE grade = ? AND section = ?
         ORDER BY roll_number ASC
         """,
         (grade, section)
@@ -522,11 +565,11 @@ def teacher_dashboard():
     if students:
       for student in students:
         with st.expander(
-            f"Roll No. {student[1]} — {student[2]} (ID: `{student[0]}` | Blood: {student[3]})"
+            f"Roll No. {student[2]} — {student[3]} (ID: `{student[1]}` | Blood: {student[6]})"
         ):
           photo_col, info_col = st.columns([1, 3], gap="large")
           with photo_col:
-            show_student_photo(student[6], student[2])
+            show_student_photo(student[11] if len(student) > 11 else None, student[3])
           with info_col:
             updated_photo = st.file_uploader(
               "Upload / Replace Student Photo",
@@ -535,18 +578,19 @@ def teacher_dashboard():
             )
             if st.button("Save Photo", key=f"teacher_save_photo_{student[0]}"):
               if updated_photo:
-                conn.execute("UPDATE students SET photo = ? WHERE id_number = ?", (updated_photo.getvalue(), student[0]))
+                conn.execute("UPDATE students SET photo = ? WHERE id = ?", (updated_photo.getvalue(), student[0]))
                 conn.commit()
                 st.success("Student photo updated.")
                 st.rerun()
               else:
                 st.warning("Choose an image first.")
             st.markdown(f"""
-              - **Student ID:** `{student[0]}`
-              - **Roll Number:** {student[1]}
-              - **Allergies:** {student[4]}
-              - **Emergency Contact:** {student[5]}
+              - **Student ID:** `{student[1]}`
+              - **Roll Number:** {student[2]}
+              - **Allergies:** {student[7]}
+              - **Emergency Contact:** {student[8]}
             """)
+            render_student_editor(conn, student, "teacher")
     else:
       st.info(f"No students found in Grade {grade}{section}. Use the 'Add/Remove Students' tab to add your class list.")
 
