@@ -89,24 +89,121 @@ def init_db():
         )
     """)
 
-  cursor.execute("SELECT COUNT(*) FROM students")
-  if cursor.fetchone()[0] == 0:
-    initial_students = [
-        (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+91xxxxxxxxxx", "Fully Vaccinated", "None"),
-        (14, "Diya Kumar", 6, "D", "O+", "Penicillin", "+91xxxxxxxxxx", "Fully Vaccinated", "Inhaler as needed"),
-        (15, "Raghav Shah", 2, "C", "A+", "None", "+91xxxxxxxxxx", "Fully Vaccinated", "None"),
-        (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+91xxxxxxxxxx", "Fully Vaccinated", "Lactase enzyme"),
-    ]
-    
-    for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
-      id_num = generate_roll_id(roll, grade, section)
-      cursor.execute(
-          """
-              INSERT OR IGNORE INTO students (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          """,
-          (id_num, roll, name, grade, section, blood, allergies, emergency, vax, meds),
+  # One-time refresh of the competition demo records.
+  # The previous version only inserted sample students when the table was empty,
+  # so existing SQLite databases kept displaying the old names and details.
+  cursor.execute("""
+      CREATE TABLE IF NOT EXISTS app_migrations (
+          migration_key TEXT PRIMARY KEY,
+          applied_at TEXT DEFAULT CURRENT_TIMESTAMP
       )
+  """)
+  migration_key = "replace_old_sample_students_v1"
+  cursor.execute(
+      "SELECT 1 FROM app_migrations WHERE migration_key = ?",
+      (migration_key,),
+  )
+  migration_already_applied = cursor.fetchone() is not None
+
+  demo_students = [
+      {
+          "old_name": "Aarav Sharma",
+          "roll": 7, "name": "Kabir Malhotra", "grade": 5, "section": "A",
+          "blood": "B+", "allergies": "Peanuts", "emergency": "+919876543210",
+          "vax": "Fully Vaccinated", "meds": "None",
+      },
+      {
+          "old_name": "Isha V Prasad",
+          "roll": 12, "name": "Diya Mehta", "grade": 6, "section": "D",
+          "blood": "O+", "allergies": "None", "emergency": "+919123456789",
+          "vax": "Fully Vaccinated", "meds": "None",
+      },
+      {
+          "old_name": "Noopura Nambiar",
+          "roll": 18, "name": "Meera Iyer", "grade": 6, "section": "D",
+          "blood": "A+", "allergies": "Dust", "emergency": "+919988776655",
+          "vax": "Fully Vaccinated", "meds": "None",
+      },
+      {
+          "old_name": "Ananya Rao",
+          "roll": 23, "name": "Rohan Kapoor", "grade": 3, "section": "B",
+          "blood": "O-", "allergies": "Dairy", "emergency": "+919555544444",
+          "vax": "Fully Vaccinated", "meds": "None",
+      },
+  ]
+
+  if not migration_already_applied:
+    cursor.execute("SELECT COUNT(*) FROM students")
+    existing_count = cursor.fetchone()[0]
+
+    if existing_count == 0:
+      for student in demo_students:
+        new_id = generate_roll_id(
+            student["roll"], student["grade"], student["section"]
+        )
+        cursor.execute(
+            """
+            INSERT INTO students
+            (id_number, roll_number, name, grade, section, blood_group,
+             allergies, emergency_contact, vaccination_history, medications)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                new_id, student["roll"], student["name"], student["grade"],
+                student["section"], student["blood"], student["allergies"],
+                student["emergency"], student["vax"], student["meds"],
+            ),
+        )
+    else:
+      # Update the old demo rows in place. This preserves their database row IDs,
+      # while clearing any old photo so it is not shown beside a different name.
+      for student in demo_students:
+        new_id = generate_roll_id(
+            student["roll"], student["grade"], student["section"]
+        )
+        cursor.execute(
+            """
+            UPDATE students
+            SET id_number = ?, roll_number = ?, name = ?, grade = ?,
+                section = ?, blood_group = ?, allergies = ?,
+                emergency_contact = ?, vaccination_history = ?,
+                medications = ?, photo = NULL
+            WHERE name = ?
+            """,
+            (
+                new_id, student["roll"], student["name"], student["grade"],
+                student["section"], student["blood"], student["allergies"],
+                student["emergency"], student["vax"], student["meds"],
+                student["old_name"],
+            ),
+        )
+
+      # If the database had no matching old sample rows, add the demo records
+      # only when there are no student records to avoid duplicating custom data.
+      cursor.execute("SELECT COUNT(*) FROM students")
+      if cursor.fetchone()[0] == 0:
+        for student in demo_students:
+          new_id = generate_roll_id(
+              student["roll"], student["grade"], student["section"]
+          )
+          cursor.execute(
+              """
+              INSERT INTO students
+              (id_number, roll_number, name, grade, section, blood_group,
+               allergies, emergency_contact, vaccination_history, medications)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              """,
+              (
+                  new_id, student["roll"], student["name"], student["grade"],
+                  student["section"], student["blood"], student["allergies"],
+                  student["emergency"], student["vax"], student["meds"],
+              ),
+          )
+
+    cursor.execute(
+        "INSERT INTO app_migrations (migration_key) VALUES (?)",
+        (migration_key,),
+    )
 
   # Keep all valid saved demo contacts in the same +91XXXXXXXXXX format.
   cursor.execute("SELECT id, emergency_contact FROM students")
