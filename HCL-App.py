@@ -8,6 +8,8 @@ st.set_page_config(
 
 # --- DATABASE SETUP & MIGRATION ---
 DB_NAME = "school_health.db"
+# Competition-demo password for the pre-login emergency lookup.
+EMERGENCY_LOOKUP_PASSWORD = "HealthSOS"
 
 
 def get_connection():
@@ -15,7 +17,7 @@ def get_connection():
 
 
 def generate_roll_id(roll_number, grade, section):
-  """Generates ID: gj_roll no._class.section (e.g., 'gj_12_6b')"""
+  """Generates ID: gj_roll no._class.section (e.g., 'gj_14_6d')"""
   return f"gj_{str(roll_number).strip()}_{grade}{section.lower()}"
 
 
@@ -72,63 +74,22 @@ def init_db():
         )
     """)
 
-  # Fictional demo records. All fields are intentionally different from the
-  # original sample data so the displayed demo profiles are fully refreshed.
-  initial_students = [
-      (8, "Kabir Malhotra", 5, "C", "A+", "None recorded", "DEMO-EMERGENCY-001", "Dose records up to date (demo)", "None recorded"),
-      (12, "Diya Mehta", 6, "B", "B-", "Pollen (demo)", "DEMO-EMERGENCY-002", "Booster due (demo)", "None recorded"),
-      (18, "Meera Iyer", 7, "A", "AB+", "None recorded", "DEMO-EMERGENCY-003", "Records pending verification (demo)", "None recorded"),
-      (6, "Rohan Kapoor", 4, "C", "O-", "Dust (demo)", "DEMO-EMERGENCY-004", "Dose records up to date (demo)", "None recorded"),
-  ]
-
-  # Identify the original built-in demo rows by their old names, their newer
-  # demo names, or their original class/roll combinations. Then update every
-  # field in place (including roll, grade, section, ID and health details).
-  # This preserves each row's primary key and uploaded photo.
-  old_demo_names = ["Aarav Sharma", "Isha V Prasad", "Noopura Nambiar", "Ananya Rao"]
-  new_demo_names = ["Kabir Malhotra", "Diya Mehta", "Meera Iyer", "Rohan Kapoor"]
-  original_demo_positions = [(1, 5, "A"), (14, 6, "D"), (15, 6, "D"), (3, 3, "B")]
-  for index, (roll, name, grade, section, blood, allergies, emergency, vax, meds) in enumerate(initial_students):
-    old_roll, old_grade, old_section = original_demo_positions[index]
-    old_name = old_demo_names[index]
-    new_name = new_demo_names[index]
-    cursor.execute(
-        """SELECT id, name, photo FROM students
-           WHERE name IN (?, ?)
-              OR (roll_number = ? AND grade = ? AND section = ?)
-           ORDER BY id""",
-        (old_name, new_name, old_roll, old_grade, old_section),
-    )
-    matches = cursor.fetchall()
-    id_num = generate_roll_id(roll, grade, section)
-
-    if matches:
-      canonical_id = matches[0][0]
+  cursor.execute("SELECT COUNT(*) FROM students")
+  if cursor.fetchone()[0] == 0:
+    initial_students = [
+        (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
+        (14, "Isha V Prasad", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
+        (15, "Noopura Nambiar", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
+        (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
+    ]
+    
+    for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
+      id_num = generate_roll_id(roll, grade, section)
       cursor.execute(
-          """UPDATE students
-             SET id_number=?, roll_number=?, name=?, grade=?, section=?,
-                 blood_group=?, allergies=?, emergency_contact=?,
-                 vaccination_history=?, medications=?
-             WHERE id=?""",
-          (id_num, roll, name, grade, section, blood, allergies, emergency,
-           vax, meds, canonical_id),
-      )
-      # Remove only extra rows that are recognisable as these built-in demo
-      # records; retain any unrelated student records.
-      for duplicate_id, duplicate_name, duplicate_photo in matches[1:]:
-        if duplicate_name in (old_name, new_name):
-          if duplicate_photo:
-            cursor.execute(
-                "UPDATE students SET photo = COALESCE(photo, ?) WHERE id = ?",
-                (duplicate_photo, canonical_id),
-            )
-          cursor.execute("DELETE FROM students WHERE id = ?", (duplicate_id,))
-    else:
-      cursor.execute(
-          """INSERT OR IGNORE INTO students
-             (id_number, roll_number, name, grade, section, blood_group,
-              allergies, emergency_contact, vaccination_history, medications)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+          """
+              INSERT OR IGNORE INTO students (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
           (id_num, roll, name, grade, section, blood, allergies, emergency, vax, meds),
       )
 
@@ -190,10 +151,115 @@ if "teacher_section" not in st.session_state:
   st.session_state.teacher_section = "A"
 
 
+# --- PRE-LOGIN EMERGENCY STUDENT LOOKUP ---
+def show_emergency_student(student):
+  """Display the selected demo student's health details and photo."""
+  st.markdown(f"### 🚨 {student[3]}")
+  photo_col, info_col = st.columns([1, 3], gap="large")
+  with photo_col:
+    show_student_photo(student[11] if len(student) > 11 else None, student[3])
+  with info_col:
+    st.markdown(f"""
+    - **Student ID:** `{student[1]}`
+    - **Roll Number:** {student[2]}
+    - **Grade / Section:** {student[4]}{student[5]}
+    - **Blood Group:** {student[6] or 'Not provided'}
+    - **Allergies:** {student[7] or 'None recorded'}
+    - **Emergency Contact:** {student[8] or 'Not provided'}
+    - **Vaccinations:** {student[9] or 'Not provided'}
+    - **Medications:** {student[10] or 'None recorded'}
+    """)
+
+
+def emergency_lookup_section():
+  """Password-gated emergency lookup available before normal sign-in."""
+  st.markdown("## 🚨 Emergency Student Lookup")
+  st.caption("Competition demo: search using the details you know. Enter the shared demo password to continue.")
+
+  if not st.session_state.get("emergency_lookup_unlocked", False):
+    with st.form("emergency_lookup_password_form"):
+      entered_password = st.text_input("Emergency Access Password", type="password")
+      unlock = st.form_submit_button("Unlock Emergency Lookup")
+    if unlock:
+      if entered_password == EMERGENCY_LOOKUP_PASSWORD:
+        st.session_state.emergency_lookup_unlocked = True
+        st.rerun()
+      else:
+        st.error("Incorrect password. Please try again.")
+    return
+
+  conn = get_connection()
+  by_name, by_class, by_roll = st.tabs(["🔤 By Name", "🏫 By Class", "🔢 By Roll Number"])
+
+  with by_name:
+    name_query = st.text_input("Enter full or part of the student's name", key="emergency_name_query").strip()
+    if name_query:
+      rows = conn.execute(
+          "SELECT * FROM students WHERE name LIKE ? COLLATE NOCASE ORDER BY grade, section, roll_number",
+          (f"%{name_query}%",)
+      ).fetchall()
+      if rows:
+        choices = {f"{r[3]} — Grade {r[4]}{r[5]}, Roll No. {r[2]}": r for r in rows}
+        selected_label = st.selectbox("Select the student", list(choices), key="emergency_name_result")
+        show_emergency_student(choices[selected_label])
+      else:
+        st.warning("No matching student found. Check the spelling or try part of the name.")
+
+  with by_class:
+    class_col, section_col = st.columns(2)
+    with class_col:
+      lookup_grade = st.selectbox("Grade", list(range(1, 13)), key="emergency_grade")
+    with section_col:
+      lookup_section = st.selectbox("Section", ["A", "B", "C", "D", "E"], key="emergency_section")
+    rows = conn.execute(
+        "SELECT * FROM students WHERE grade = ? AND section = ? ORDER BY roll_number",
+        (lookup_grade, lookup_section)
+    ).fetchall()
+    if rows:
+      choices = {f"Roll No. {r[2]} — {r[3]}": r for r in rows}
+      selected_label = st.selectbox("Select the student", list(choices), key="emergency_class_result")
+      show_emergency_student(choices[selected_label])
+    else:
+      st.info("No students are registered in this class.")
+
+  with by_roll:
+    roll_col, grade_col, sec_col = st.columns(3)
+    with roll_col:
+      lookup_roll = st.number_input("Roll Number", min_value=1, step=1, value=1, key="emergency_roll")
+    with grade_col:
+      roll_grade = st.selectbox("Grade", list(range(1, 13)), key="emergency_roll_grade")
+    with sec_col:
+      roll_section = st.selectbox("Section", ["A", "B", "C", "D", "E"], key="emergency_roll_section")
+    if st.button("Find Student", key="emergency_find_roll"):
+      row = conn.execute(
+          "SELECT * FROM students WHERE roll_number = ? AND grade = ? AND section = ?",
+          (lookup_roll, roll_grade, roll_section)
+      ).fetchone()
+      if row:
+        st.session_state.emergency_roll_result_id = row[0]
+      else:
+        st.session_state.emergency_roll_result_id = None
+        st.warning("No student found with those class and roll details.")
+    result_id = st.session_state.get("emergency_roll_result_id")
+    if result_id is not None:
+      row = conn.execute("SELECT * FROM students WHERE id = ?", (result_id,)).fetchone()
+      if row:
+        show_emergency_student(row)
+
+  conn.close()
+  if st.button("Lock Emergency Lookup", key="lock_emergency_lookup"):
+    st.session_state.emergency_lookup_unlocked = False
+    st.session_state.pop("emergency_roll_result_id", None)
+    st.rerun()
+
+
 # --- LOGIN PAGE ---
 def login_page():
   st.markdown("<h1 style='text-align: center;'>🏥 School Health Passport</h1>", unsafe_allow_html=True)
   st.markdown("<p style='text-align: center; color: #666;'>School Health & Wellness Portal</p>", unsafe_allow_html=True)
+
+  with st.expander("🚨 Emergency Student Lookup (Before Login)", expanded=False):
+    emergency_lookup_section()
 
   _, col2, _ = st.columns([1, 2, 1])
 
@@ -203,7 +269,7 @@ def login_page():
       st.markdown("""
             **Nurse:** \`nurse@school.com\` / \`password123\`  
             **Teacher:** \`teacher@school.com\` / \`password123\`  
-            **Parent:** Select **Parent** and enter your child's **Student ID** (e.g., \`gj_12_6b\`) directly to view their health passport.
+            **Parent:** Select **Parent** and enter your child's **Student ID** (e.g., \`gj_14_6d\`) directly to view their health passport.
             """)
 
     # Use a callback or session-state bound selectbox to prevent form caching issues
@@ -211,7 +277,7 @@ def login_page():
 
     with st.form("login_form"):
       if selected_role == "Parent":
-        student_id_input = st.text_input("Child's Student ID (e.g., gj_12_6b)", value="gj_12_6b")
+        student_id_input = st.text_input("Child's Student ID (e.g., gj_14_6d)", value="gj_14_6d")
       else:
         email = st.text_input("Email Address", value="nurse@school.com" if selected_role == "Nurse" else "teacher@school.com")
         password = st.text_input("Password", type="password", value="password123")
@@ -302,7 +368,7 @@ def render_student_search(conn, grade=None, section=None, key_prefix="search"):
 
   query = st.text_input(
       "Search students",
-      placeholder="e.g. Diya, Grade 6, B-, pollen, gj_12_6b",
+      placeholder="e.g. Isha, Grade 6, O+, peanuts, gj_14_6d",
       key=f"{key_prefix}_query",
   ).strip()
 
@@ -450,7 +516,7 @@ def nurse_dashboard():
   with tab2:
     st.subheader("Add Student Health Record")
     with st.form("add_student_form"):
-      s_name = st.text_input("Student Name (e.g., Kabir Malhotra)")
+      s_name = st.text_input("Student Name (e.g., Isha V Prasad)")
       col_r, col_g, col_s = st.columns(3)
       with col_r:
         s_roll = st.number_input("Roll Number", min_value=1, step=1, value=1)
@@ -811,6 +877,8 @@ def main():
     if st.sidebar.button("Logout"):
       st.session_state.logged_in = False
       st.session_state.user = None
+      st.session_state.emergency_lookup_unlocked = False
+      st.session_state.pop("emergency_roll_result_id", None)
       st.session_state.nurse_selected_grade = None
       st.session_state.nurse_selected_section = None
       st.rerun()
