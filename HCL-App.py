@@ -172,13 +172,18 @@ def show_emergency_student(student):
 
 
 def emergency_lookup_section():
-  """Password-gated emergency lookup available before normal sign-in."""
+  """Password-gated, Gmail-style emergency student search."""
   st.markdown("## 🚨 Emergency Student Lookup")
-  st.caption("Competition demo: search using the details you know. Enter the shared demo password to continue.")
+  st.caption(
+      "Search by student name, roll number or ID. Use the filter button "
+      "to narrow the results with additional details."
+  )
 
   if not st.session_state.get("emergency_lookup_unlocked", False):
     with st.form("emergency_lookup_password_form"):
-      entered_password = st.text_input("Emergency Access Password", type="password")
+      entered_password = st.text_input(
+          "Emergency Access Password", type="password"
+      )
       unlock = st.form_submit_button("Unlock Emergency Lookup")
     if unlock:
       if entered_password == EMERGENCY_LOOKUP_PASSWORD:
@@ -188,68 +193,94 @@ def emergency_lookup_section():
         st.error("Incorrect password. Please try again.")
     return
 
-  conn = get_connection()
-  by_name, by_class, by_roll = st.tabs(["🔤 By Name", "🏫 By Class", "🔢 By Roll Number"])
+  # A single Gmail-style search bar with optional advanced-search filters.
+  search_col, filter_col = st.columns([8, 1])
+  with search_col:
+    search_query = st.text_input(
+        "Search students",
+        placeholder="Search by name, roll number or student ID...",
+        key="emergency_main_search",
+        label_visibility="collapsed",
+    ).strip()
 
-  with by_name:
-    name_query = st.text_input("Enter full or part of the student's name", key="emergency_name_query").strip()
-    if name_query:
-      rows = conn.execute(
-          "SELECT * FROM students WHERE name LIKE ? COLLATE NOCASE ORDER BY grade, section, roll_number",
-          (f"%{name_query}%",)
-      ).fetchall()
-      if rows:
-        choices = {f"{r[3]} — Grade {r[4]}{r[5]}, Roll No. {r[2]}": r for r in rows}
-        selected_label = st.selectbox("Select the student", list(choices), key="emergency_name_result")
-        show_emergency_student(choices[selected_label])
-      else:
-        st.warning("No matching student found. Check the spelling or try part of the name.")
+  with filter_col:
+    with st.popover("⚙️", use_container_width=True):
+      st.markdown("**Advanced search**")
+      filter_name = st.text_input(
+          "Student name", key="emergency_filter_name",
+          placeholder="Full or part of name"
+      ).strip()
+      filter_roll = st.text_input(
+          "Roll number", key="emergency_filter_roll",
+          placeholder="Enter roll number"
+      ).strip()
+      filter_grade = st.selectbox(
+          "Grade", ["Any"] + [str(g) for g in range(1, 13)],
+          key="emergency_filter_grade"
+      )
+      filter_section = st.selectbox(
+          "Section", ["Any", "A", "B", "C", "D", "E"],
+          key="emergency_filter_section"
+      )
 
-  with by_class:
-    class_col, section_col = st.columns(2)
-    with class_col:
-      lookup_grade = st.selectbox("Grade", list(range(1, 13)), key="emergency_grade")
-    with section_col:
-      lookup_section = st.selectbox("Section", ["A", "B", "C", "D", "E"], key="emergency_section")
-    rows = conn.execute(
-        "SELECT * FROM students WHERE grade = ? AND section = ? ORDER BY roll_number",
-        (lookup_grade, lookup_section)
-    ).fetchall()
-    if rows:
-      choices = {f"Roll No. {r[2]} — {r[3]}": r for r in rows}
-      selected_label = st.selectbox("Select the student", list(choices), key="emergency_class_result")
-      show_emergency_student(choices[selected_label])
+  if st.button("🔎 Search", key="emergency_search_button"):
+    st.session_state.emergency_search_submitted = True
+
+  if st.session_state.get("emergency_search_submitted", False):
+    conditions = []
+    params = []
+
+    if search_query:
+      pattern = f"%{search_query}%"
+      conditions.append(
+          "(name LIKE ? COLLATE NOCASE "
+          "OR CAST(roll_number AS TEXT) LIKE ? "
+          "OR id_number LIKE ? COLLATE NOCASE)"
+      )
+      params.extend([pattern, pattern, pattern])
+
+    if filter_name:
+      conditions.append("name LIKE ? COLLATE NOCASE")
+      params.append(f"%{filter_name}%")
+    if filter_roll:
+      conditions.append("CAST(roll_number AS TEXT) LIKE ?")
+      params.append(f"%{filter_roll}%")
+    if filter_grade != "Any":
+      conditions.append("grade = ?")
+      params.append(int(filter_grade))
+    if filter_section != "Any":
+      conditions.append("section = ?")
+      params.append(filter_section)
+
+    if not conditions:
+      st.info("Type something in the search bar or choose a filter first.")
     else:
-      st.info("No students are registered in this class.")
+      sql = "SELECT * FROM students WHERE " + " AND ".join(conditions)
+      sql += " ORDER BY grade, section, roll_number"
+      conn = get_connection()
+      rows = conn.execute(sql, params).fetchall()
+      conn.close()
 
-  with by_roll:
-    roll_col, grade_col, sec_col = st.columns(3)
-    with roll_col:
-      lookup_roll = st.number_input("Roll Number", min_value=1, step=1, value=1, key="emergency_roll")
-    with grade_col:
-      roll_grade = st.selectbox("Grade", list(range(1, 13)), key="emergency_roll_grade")
-    with sec_col:
-      roll_section = st.selectbox("Section", ["A", "B", "C", "D", "E"], key="emergency_roll_section")
-    if st.button("Find Student", key="emergency_find_roll"):
-      row = conn.execute(
-          "SELECT * FROM students WHERE roll_number = ? AND grade = ? AND section = ?",
-          (lookup_roll, roll_grade, roll_section)
-      ).fetchone()
-      if row:
-        st.session_state.emergency_roll_result_id = row[0]
+      if rows:
+        st.success(f"Found {len(rows)} matching student record(s).")
+        if len(rows) == 1:
+          show_emergency_student(rows[0])
+        else:
+          choices = {
+              f"{r[3]} — Grade {r[4]}{r[5]}, Roll No. {r[2]}": r
+              for r in rows
+          }
+          selected_label = st.selectbox(
+              "Select the student", list(choices.keys()),
+              key="emergency_search_result"
+          )
+          show_emergency_student(choices[selected_label])
       else:
-        st.session_state.emergency_roll_result_id = None
-        st.warning("No student found with those class and roll details.")
-    result_id = st.session_state.get("emergency_roll_result_id")
-    if result_id is not None:
-      row = conn.execute("SELECT * FROM students WHERE id = ?", (result_id,)).fetchone()
-      if row:
-        show_emergency_student(row)
+        st.warning("No matching student found. Try changing your search or filters.")
 
-  conn.close()
-  if st.button("Lock Emergency Lookup", key="lock_emergency_lookup"):
+  if st.button("🔒 Lock Emergency Lookup", key="lock_emergency_lookup"):
     st.session_state.emergency_lookup_unlocked = False
-    st.session_state.pop("emergency_roll_result_id", None)
+    st.session_state.emergency_search_submitted = False
     st.rerun()
 
 
