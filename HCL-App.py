@@ -72,21 +72,63 @@ def init_db():
         )
     """)
 
+  initial_students = [
+      (1, "Kabir Malhotra", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
+      (14, "Diya Mehta", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
+      (15, "Meera Iyer", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
+      (3, "Rohan Kapoor", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
+  ]
+
   cursor.execute("SELECT COUNT(*) FROM students")
   if cursor.fetchone()[0] == 0:
-    initial_students = [
-        (1, "Kabir Malhotra", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
-        (14, "Diya Mehta", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
-        (15, "Meera Iyer", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
-        (3, "Rohan Kapoor", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
-    ]
-    
     for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
       id_num = generate_roll_id(roll, grade, section)
       cursor.execute(
           """
               INSERT OR IGNORE INTO students (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          """,
+          (id_num, roll, name, grade, section, blood, allergies, emergency, vax, meds),
+      )
+
+  # Rename the existing built-in demo students in-place. Match by class and
+  # roll number (not only id_number), because older app versions may have
+  # stored a different ID format. This prevents old and new demo names from
+  # appearing as separate students. Existing health details/photos are kept.
+  old_demo_names = {
+      "Aarav Sharma", "Isha V Prasad", "Noopura Nambiar", "Ananya Rao",
+      "Kabir Malhotra", "Diya Mehta", "Meera Iyer", "Rohan Kapoor",
+  }
+  for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
+    cursor.execute(
+        "SELECT id, name, photo FROM students WHERE roll_number = ? AND grade = ? AND section = ? ORDER BY id",
+        (roll, grade, section),
+    )
+    matches = cursor.fetchall()
+    if matches:
+      # Keep the first matching row as the canonical record. If an earlier
+      # version created a duplicate demo row, preserve its photo if needed
+      # and remove only duplicate rows belonging to this known demo set.
+      canonical_id = matches[0][0]
+      cursor.execute(
+          "UPDATE students SET name = ?, id_number = ? WHERE id = ?",
+          (name, generate_roll_id(roll, grade, section), canonical_id),
+      )
+      for duplicate_id, duplicate_name, duplicate_photo in matches[1:]:
+        if duplicate_name in old_demo_names:
+          if duplicate_photo:
+            cursor.execute(
+                "UPDATE students SET photo = COALESCE(photo, ?) WHERE id = ?",
+                (duplicate_photo, canonical_id),
+            )
+          cursor.execute("DELETE FROM students WHERE id = ?", (duplicate_id,))
+    else:
+      id_num = generate_roll_id(roll, grade, section)
+      cursor.execute(
+          """
+          INSERT OR IGNORE INTO students
+          (id_number, roll_number, name, grade, section, blood_group, allergies, emergency_contact, vaccination_history, medications)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           """,
           (id_num, roll, name, grade, section, blood, allergies, emergency, vax, meds),
       )
