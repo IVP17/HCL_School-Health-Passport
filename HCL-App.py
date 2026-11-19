@@ -92,10 +92,10 @@ def init_db():
   cursor.execute("SELECT COUNT(*) FROM students")
   if cursor.fetchone()[0] == 0:
     initial_students = [
-        (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+919876543210", "Fully Vaccinated", "None"),
-        (14, "Isha V Prasad", 6, "D", "O+", "Penicillin", "+919123456789", "Fully Vaccinated", "Inhaler as needed"),
-        (15, "Noopura Nambiar", 6, "D", "A+", "None", "+919988776655", "Fully Vaccinated", "None"),
-        (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+919555544444", "Fully Vaccinated", "Lactase enzyme"),
+        (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+91xxxxxxxxxx", "Fully Vaccinated", "None"),
+        (14, "Diya Kumar", 6, "D", "O+", "Penicillin", "+91xxxxxxxxxx", "Fully Vaccinated", "Inhaler as needed"),
+        (15, "Raghav Shah", 2, "C", "A+", "None", "+91xxxxxxxxxx", "Fully Vaccinated", "None"),
+        (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+91xxxxxxxxxx", "Fully Vaccinated", "Lactase enzyme"),
     ]
     
     for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
