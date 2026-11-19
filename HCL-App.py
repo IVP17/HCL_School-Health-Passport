@@ -260,17 +260,20 @@ def render_student_search(conn, grade=None, section=None, key_prefix="search"):
           f"Grade {student[4]}{student[5]} • Roll No. {student[2]} — {student[3]} "
           f"(Blood Group: {student[6] or 'Not provided'})"
       ):
-        show_student_photo(student[11] if len(student) > 11 else None, student[3])
-        st.markdown(f"""
-        - **Student ID:** `{student[1]}`
-        - **Name:** {student[3]}
-        - **Grade / Section:** {student[4]}{student[5]}
-        - **Blood Group:** {student[6] or 'Not provided'}
-        - **Allergies:** {student[7] or 'None recorded'}
-        - **Emergency Contact:** {student[8] or 'Not provided'}
-        - **Vaccinations:** {student[9] or 'Not provided'}
-        - **Medications:** {student[10] or 'None recorded'}
-        """)
+        photo_col, info_col = st.columns([1, 3], gap="large")
+        with photo_col:
+          show_student_photo(student[11] if len(student) > 11 else None, student[3])
+        with info_col:
+          st.markdown(f"""
+          - **Student ID:** `{student[1]}`
+          - **Name:** {student[3]}
+          - **Grade / Section:** {student[4]}{student[5]}
+          - **Blood Group:** {student[6] or 'Not provided'}
+          - **Allergies:** {student[7] or 'None recorded'}
+          - **Emergency Contact:** {student[8] or 'Not provided'}
+          - **Vaccinations:** {student[9] or 'Not provided'}
+          - **Medications:** {student[10] or 'None recorded'}
+          """)
   else:
     st.warning("No students matched your search. Try another name or detail.")
 
@@ -326,29 +329,32 @@ def nurse_dashboard():
             with st.expander(
                 f"Roll No. {student[2]} — {student[3]} (ID: `{student[1]}`)"
             ):
-              show_student_photo(student[11] if len(student) > 11 else None, student[3])
-              new_photo = st.file_uploader(
+              photo_col, info_col = st.columns([1, 3], gap="large")
+              with photo_col:
+                show_student_photo(student[11] if len(student) > 11 else None, student[3])
+              with info_col:
+                new_photo = st.file_uploader(
                   "Upload / Replace Student Photo",
                   type=["jpg", "jpeg", "png", "webp"],
-                  key=f"nurse_photo_{student[0]}"
-              )
-              if st.button("Save Photo", key=f"nurse_save_photo_{student[0]}"):
-                if new_photo:
-                  conn.execute("UPDATE students SET photo = ? WHERE id = ?", (new_photo.getvalue(), student[0]))
-                  conn.commit()
-                  st.success("Student photo updated.")
-                  st.rerun()
-                else:
-                  st.warning("Choose an image first.")
-              st.markdown(f"""
-                - **Student ID:** `{student[1]}`
-                - **Roll Number:** {student[2]}
-                - **Blood Group:** {student[6]}
-                - **Allergies:** {student[7]}
-                - **Emergency Contact:** {student[8]}
-                - **Vaccinations:** {student[9]}
-                - **Medications:** {student[10]}
-              """)
+                    key=f"nurse_photo_{student[0]}"
+                )
+                if st.button("Save Photo", key=f"nurse_save_photo_{student[0]}"):
+                  if new_photo:
+                    conn.execute("UPDATE students SET photo = ? WHERE id = ?", (new_photo.getvalue(), student[0]))
+                    conn.commit()
+                    st.success("Student photo updated.")
+                    st.rerun()
+                  else:
+                    st.warning("Choose an image first.")
+                st.markdown(f"""
+                  - **Student ID:** `{student[1]}`
+                  - **Roll Number:** {student[2]}
+                  - **Blood Group:** {student[6]}
+                  - **Allergies:** {student[7]}
+                  - **Emergency Contact:** {student[8]}
+                  - **Vaccinations:** {student[9]}
+                  - **Medications:** {student[10]}
+                """)
               if st.button("Remove Student (Left School)", key=f"nurse_rem_{student[0]}"):
                 conn.execute("DELETE FROM students WHERE id = ?", (student[0],))
                 conn.commit()
@@ -518,26 +524,29 @@ def teacher_dashboard():
         with st.expander(
             f"Roll No. {student[1]} — {student[2]} (ID: `{student[0]}` | Blood: {student[3]})"
         ):
-          show_student_photo(student[6], student[2])
-          updated_photo = st.file_uploader(
+          photo_col, info_col = st.columns([1, 3], gap="large")
+          with photo_col:
+            show_student_photo(student[6], student[2])
+          with info_col:
+            updated_photo = st.file_uploader(
               "Upload / Replace Student Photo",
               type=["jpg", "jpeg", "png", "webp"],
-              key=f"teacher_photo_{student[0]}"
-          )
-          if st.button("Save Photo", key=f"teacher_save_photo_{student[0]}"):
-            if updated_photo:
-              conn.execute("UPDATE students SET photo = ? WHERE id_number = ?", (updated_photo.getvalue(), student[0]))
-              conn.commit()
-              st.success("Student photo updated.")
-              st.rerun()
-            else:
-              st.warning("Choose an image first.")
-          st.markdown(f"""
-            - **Student ID:** `{student[0]}`
-            - **Roll Number:** {student[1]}
-            - **Allergies:** {student[4]}
-            - **Emergency Contact:** {student[5]}
-          """)
+                key=f"teacher_photo_{student[0]}"
+            )
+            if st.button("Save Photo", key=f"teacher_save_photo_{student[0]}"):
+              if updated_photo:
+                conn.execute("UPDATE students SET photo = ? WHERE id_number = ?", (updated_photo.getvalue(), student[0]))
+                conn.commit()
+                st.success("Student photo updated.")
+                st.rerun()
+              else:
+                st.warning("Choose an image first.")
+            st.markdown(f"""
+              - **Student ID:** `{student[0]}`
+              - **Roll Number:** {student[1]}
+              - **Allergies:** {student[4]}
+              - **Emergency Contact:** {student[5]}
+            """)
     else:
       st.info(f"No students found in Grade {grade}{section}. Use the 'Add/Remove Students' tab to add your class list.")
 
@@ -671,15 +680,18 @@ def parent_dashboard():
 
   if student:
     st.markdown(f"### 📋 Health Passport for: **{student[3]}** (ID: \`{student[1]}\` | Roll No: {student[2]})")
-    show_student_photo(student[11] if len(student) > 11 else None, student[3])
-    st.markdown(f"""
-        - **Grade / Section:** Grade {student[4]}{student[5]}
-        - **Blood Group:** {student[6]}
-        - **Allergies:** {student[7]}
-        - **Emergency Contact:** {student[8]}
-        - **Vaccination History:** {student[9]}
-        - **Medications:** {student[10]}
-        """)
+    photo_col, info_col = st.columns([1, 3], gap="large")
+    with photo_col:
+      show_student_photo(student[11] if len(student) > 11 else None, student[3])
+    with info_col:
+      st.markdown(f"""
+          - **Grade / Section:** Grade {student[4]}{student[5]}
+          - **Blood Group:** {student[6]}
+          - **Allergies:** {student[7]}
+          - **Emergency Contact:** {student[8]}
+          - **Vaccination History:** {student[9]}
+          - **Medications:** {student[10]}
+          """)
 
     st.markdown("### 📨 Messages & Updates for This Child")
     parent_messages = conn.execute(
