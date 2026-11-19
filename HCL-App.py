@@ -21,6 +21,18 @@ def generate_roll_id(roll_number, grade, section):
   return f"gj_{str(roll_number).strip()}_{grade}{section.lower()}"
 
 
+def normalize_indian_phone(value):
+  """Return an Indian mobile number in the +91XXXXXXXXXX format."""
+  digits = re.sub(r"\D", "", str(value or ""))
+  if len(digits) == 10:
+    return "+91" + digits
+  if len(digits) == 12 and digits.startswith("91"):
+    return "+" + digits
+  if len(digits) == 11 and digits.startswith("0"):
+    return "+91" + digits[1:]
+  return None
+
+
 def init_db():
   conn = get_connection()
   cursor = conn.cursor()
@@ -77,10 +89,10 @@ def init_db():
   cursor.execute("SELECT COUNT(*) FROM students")
   if cursor.fetchone()[0] == 0:
     initial_students = [
-        (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+91 98765 43210", "Fully Vaccinated", "None"),
-        (14, "Isha V Prasad", 6, "D", "O+", "Penicillin", "+91 91234 56789", "Fully Vaccinated", "Inhaler as needed"),
-        (15, "Noopura Nambiar", 6, "D", "A+", "None", "+91 99887 76655", "Fully Vaccinated", "None"),
-        (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+91 95555 44444", "Fully Vaccinated", "Lactase enzyme"),
+        (1, "Aarav Sharma", 5, "A", "B+", "Peanuts, Dust", "+919876543210", "Fully Vaccinated", "None"),
+        (14, "Isha V Prasad", 6, "D", "O+", "Penicillin", "+919123456789", "Fully Vaccinated", "Inhaler as needed"),
+        (15, "Noopura Nambiar", 6, "D", "A+", "None", "+919988776655", "Fully Vaccinated", "None"),
+        (3, "Ananya Rao", 3, "B", "O-", "Dairy", "+919555544444", "Fully Vaccinated", "Lactase enzyme"),
     ]
     
     for roll, name, grade, section, blood, allergies, emergency, vax, meds in initial_students:
@@ -91,6 +103,16 @@ def init_db():
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           """,
           (id_num, roll, name, grade, section, blood, allergies, emergency, vax, meds),
+      )
+
+  # Keep all valid saved demo contacts in the same +91XXXXXXXXXX format.
+  cursor.execute("SELECT id, emergency_contact FROM students")
+  for student_row_id, saved_contact in cursor.fetchall():
+    formatted_contact = normalize_indian_phone(saved_contact)
+    if formatted_contact:
+      cursor.execute(
+          "UPDATE students SET emergency_contact = ? WHERE id = ?",
+          (formatted_contact, student_row_id),
       )
 
   conn.commit()
@@ -165,7 +187,7 @@ def show_emergency_student(student):
     - **Grade / Section:** {student[4]}{student[5]}
     - **Blood Group:** {student[6] or 'Not provided'}
     - **Allergies:** {student[7] or 'None recorded'}
-    - **Emergency Contact:** {student[8] or 'Not provided'}
+    - **Emergency Contact:** {normalize_indian_phone(student[8]) or student[8] or 'Not provided'}
     - **Vaccinations:** {student[9] or 'Not provided'}
     - **Medications:** {student[10] or 'None recorded'}
     """)
@@ -357,7 +379,7 @@ def render_student_editor(conn, student, key_prefix="edit"):
       edit_name = st.text_input("Student Name", value=student[3] or "")
       edit_blood = st.text_input("Blood Group", value=student[6] or "")
       edit_allergies = st.text_area("Allergies", value=student[7] or "")
-      edit_emergency = st.text_input("Emergency Contact", value=student[8] or "")
+      edit_emergency = st.text_input("Emergency Contact", value=student[8] or "", placeholder="+91XXXXXXXXXX", help="Enter a 10-digit Indian mobile number; +91 will be added automatically.")
       edit_vax = st.text_area("Vaccination History", value=student[9] or "")
       edit_meds = st.text_area("Medications", value=student[10] or "")
       edit_photo = st.file_uploader(
@@ -367,13 +389,16 @@ def render_student_editor(conn, student, key_prefix="edit"):
       )
       submitted = st.form_submit_button("Save Changes")
       if submitted:
+        formatted_emergency = normalize_indian_phone(edit_emergency)
         if not edit_name.strip():
           st.error("Student name is required.")
+        elif edit_emergency.strip() and not formatted_emergency:
+          st.error("Enter a valid 10-digit Indian mobile number.")
         elif edit_photo:
           conn.execute(
               """UPDATE students SET name=?, blood_group=?, allergies=?,
                  emergency_contact=?, vaccination_history=?, medications=?, photo=? WHERE id=?""",
-              (edit_name.strip(), edit_blood, edit_allergies, edit_emergency,
+              (edit_name.strip(), edit_blood, edit_allergies, formatted_emergency or '',
                edit_vax, edit_meds, edit_photo.getvalue(), student[0])
           )
           conn.commit()
@@ -383,7 +408,7 @@ def render_student_editor(conn, student, key_prefix="edit"):
           conn.execute(
               """UPDATE students SET name=?, blood_group=?, allergies=?,
                  emergency_contact=?, vaccination_history=?, medications=? WHERE id=?""",
-              (edit_name.strip(), edit_blood, edit_allergies, edit_emergency,
+              (edit_name.strip(), edit_blood, edit_allergies, formatted_emergency or '',
                edit_vax, edit_meds, student[0])
           )
           conn.commit()
@@ -450,7 +475,7 @@ def render_student_search(conn, grade=None, section=None, key_prefix="search"):
           - **Grade / Section:** {student[4]}{student[5]}
           - **Blood Group:** {student[6] or 'Not provided'}
           - **Allergies:** {student[7] or 'None recorded'}
-          - **Emergency Contact:** {student[8] or 'Not provided'}
+          - **Emergency Contact:** {normalize_indian_phone(student[8]) or student[8] or 'Not provided'}
           - **Vaccinations:** {student[9] or 'Not provided'}
           - **Medications:** {student[10] or 'None recorded'}
           """)
@@ -531,7 +556,7 @@ def nurse_dashboard():
                   - **Roll Number:** {student[2]}
                   - **Blood Group:** {student[6]}
                   - **Allergies:** {student[7]}
-                  - **Emergency Contact:** {student[8]}
+                  - **Emergency Contact:** {normalize_indian_phone(student[8]) or student[8] or 'Not provided'}
                   - **Vaccinations:** {student[9]}
                   - **Medications:** {student[10]}
                 """)
@@ -557,7 +582,7 @@ def nurse_dashboard():
         s_section = st.selectbox("Section", ["A", "B", "C", "D", "E"])
 
       s_blood = st.text_input("Blood Group")
-      s_emergency = st.text_input("Emergency Contact")
+      s_emergency = st.text_input("Emergency Contact", placeholder="+91XXXXXXXXXX", help="Enter a 10-digit Indian mobile number; +91 will be added automatically.")
       s_allergies = st.text_area("Allergies")
       s_vax = st.text_area("Vaccination History")
       s_meds = st.text_area("Medications")
@@ -568,7 +593,10 @@ def nurse_dashboard():
       )
 
       if st.form_submit_button("Save Student Record"):
-        if s_name.strip():
+        formatted_s_emergency = normalize_indian_phone(s_emergency)
+        if s_emergency.strip() and not formatted_s_emergency:
+          st.error("Enter a valid 10-digit Indian mobile number.")
+        elif s_name.strip():
           s_id_num = generate_roll_id(s_roll, s_grade, s_section)
           try:
             conn.execute(
@@ -579,7 +607,7 @@ def nurse_dashboard():
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (s_id_num, s_roll, s_name.strip(), s_grade, s_section, s_blood,
-                 s_allergies, s_emergency, s_vax, s_meds,
+                 s_allergies, formatted_s_emergency or '', s_vax, s_meds,
                  s_photo.getvalue() if s_photo else None),
             )
             conn.commit()
@@ -725,7 +753,7 @@ def teacher_dashboard():
               - **Student ID:** `{student[1]}`
               - **Roll Number:** {student[2]}
               - **Allergies:** {student[7]}
-              - **Emergency Contact:** {student[8]}
+              - **Emergency Contact:** {normalize_indian_phone(student[8]) or student[8] or 'Not provided'}
             """)
             render_student_editor(conn, student, "teacher")
     else:
@@ -737,7 +765,7 @@ def teacher_dashboard():
       t_name = st.text_input("Student Name")
       t_roll = st.number_input("Roll Number", min_value=1, step=1, value=1)
       t_blood = st.text_input("Blood Group")
-      t_emergency = st.text_input("Emergency Contact")
+      t_emergency = st.text_input("Emergency Contact", placeholder="+91XXXXXXXXXX", help="Enter a 10-digit Indian mobile number; +91 will be added automatically.")
       t_allergies = st.text_area("Allergies")
       t_vax = st.text_area("Vaccination History")
       t_meds = st.text_area("Medications")
@@ -749,7 +777,10 @@ def teacher_dashboard():
       )
 
       if st.form_submit_button("Add Student to My Class"):
-        if t_name.strip():
+        formatted_t_emergency = normalize_indian_phone(t_emergency)
+        if t_emergency.strip() and not formatted_t_emergency:
+          st.error("Enter a valid 10-digit Indian mobile number.")
+        elif t_name.strip():
           t_id_num = generate_roll_id(t_roll, grade, section)
           try:
             conn.execute(
@@ -760,7 +791,7 @@ def teacher_dashboard():
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (t_id_num, t_roll, t_name.strip(), grade, section, t_blood,
-                 t_allergies, t_emergency, t_vax, t_meds,
+                 t_allergies, formatted_t_emergency or '', t_vax, t_meds,
                  t_photo.getvalue() if t_photo else None),
             )
             conn.commit()
@@ -869,7 +900,7 @@ def parent_dashboard():
           - **Grade / Section:** Grade {student[4]}{student[5]}
           - **Blood Group:** {student[6]}
           - **Allergies:** {student[7]}
-          - **Emergency Contact:** {student[8]}
+          - **Emergency Contact:** {normalize_indian_phone(student[8]) or student[8] or 'Not provided'}
           - **Vaccination History:** {student[9]}
           - **Medications:** {student[10]}
           """)
