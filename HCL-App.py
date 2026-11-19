@@ -1,4 +1,5 @@
 import sqlite3
+import re
 import streamlit as st
 
 # --- PAGE CONFIGURATION ---
@@ -13,7 +14,9 @@ EMERGENCY_LOOKUP_PASSWORD = "HealthSOS"
 
 
 def get_connection():
-  return sqlite3.connect(DB_NAME, check_same_thread=False)
+  conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30)
+  conn.execute("PRAGMA busy_timeout = 30000")
+  return conn
 
 
 def generate_roll_id(roll_number, grade, section):
