@@ -561,8 +561,10 @@ def admin_dashboard():
   for account in pending:
     uid,name,email,role,emp_id,child_id,grade,section,created = account
     with st.expander(f"{role} — {name} ({email})"):
-      st.write(f"Employee ID: {emp_id or 'Not applicable'}")
-      st.write(f"Student ID: {child_id or 'Not applicable'}")
+      if role in ("Nurse", "Teacher"):
+        st.write(f"Employee ID: {emp_id or 'Not provided'}")
+      elif role == "Parent":
+        st.write(f"Child's Student ID: {child_id or 'Not provided'}")
       if role == "Teacher":
         st.write(f"Assigned class: Grade {grade}{section}")
       st.caption(f"Registered: {created or 'Date unavailable'}")
