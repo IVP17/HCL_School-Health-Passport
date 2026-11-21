@@ -611,10 +611,11 @@ def admin_dashboard():
 
   st.divider()
   st.subheader("Create an Account")
+  # Outside the form so the ID field changes immediately with the selected role.
+  role=st.selectbox("Role",["Nurse","Teacher","Parent"],key="admin_create_role")
   with st.form("admin_create_account"):
     name=st.text_input("Full Name")
     email=st.text_input("Email Address")
-    role=st.selectbox("Role",["Nurse","Teacher","Parent"])
     employee_id=""
     child_id=""
     grade=None
@@ -761,10 +762,14 @@ def login_page():
             st.error("Incorrect email or password. If you are new, create an account first.")
 
     else:
+      # Keep the role selector outside the form so Streamlit reruns immediately
+      # and displays the correct ID field when the role changes.
+      register_role = st.selectbox(
+          "Account Role", ["Parent", "Nurse", "Teacher"], key="registration_role"
+      )
       with st.form("register_form"):
         full_name = st.text_input("Full Name", placeholder="Enter your full name")
         register_email = st.text_input("Email Address", placeholder="name@example.com")
-        register_role = st.selectbox("Account Role", ["Parent", "Nurse", "Teacher"])
 
         child_id = ""
         employee_id = ""
