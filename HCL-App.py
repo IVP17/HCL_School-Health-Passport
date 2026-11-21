@@ -3,6 +3,7 @@ import re
 import hashlib
 import secrets
 import hmac
+import os
 import streamlit as st
 
 # --- PAGE CONFIGURATION ---
@@ -12,7 +13,7 @@ st.set_page_config(
 
 # --- DATABASE SETUP & MIGRATION ---
 DB_NAME = "school_health.db"
-# Competition-demo password for the pre-login emergency lookup.
+# Password for the pre-login emergency lookup.
 EMERGENCY_LOOKUP_PASSWORD = "HealthSOS"
 
 
@@ -20,6 +21,23 @@ def get_connection():
   conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30)
   conn.execute("PRAGMA busy_timeout = 30000")
   return conn
+
+
+def log_activity(action, details="", actor=None):
+  """Append a privacy-conscious audit event; never store passwords or health details."""
+  current = actor or st.session_state.get("user") or {}
+  actor_name = current.get("name", "Unauthenticated user")
+  actor_email = current.get("email", "")
+  actor_role = current.get("role", "Guest")
+  conn = get_connection()
+  conn.execute(
+      """INSERT INTO activity_history
+         (actor_name, actor_email, actor_role, action, details)
+         VALUES (?, ?, ?, ?, ?)""",
+      (actor_name, actor_email, actor_role, str(action)[:100], str(details)[:500])
+  )
+  conn.commit()
+  conn.close()
 
 
 def generate_roll_id(roll_number, grade, section):
@@ -92,7 +110,7 @@ def init_db():
         )
     """)
 
-  # One-time refresh of the competition demo records.
+  # One-time refresh of the starter student records.
   # The previous version only inserted sample students when the table was empty,
   # so existing SQLite databases kept displaying the old names and details.
   cursor.execute("""
@@ -108,7 +126,7 @@ def init_db():
   )
   migration_already_applied = cursor.fetchone() is not None
 
-  demo_students = [
+  sample_students = [
       {
           "old_name": "Aarav Sharma",
           "roll": 7, "name": "Kabir Malhotra", "grade": 5, "section": "A",
@@ -140,7 +158,7 @@ def init_db():
     existing_count = cursor.fetchone()[0]
 
     if existing_count == 0:
-      for student in demo_students:
+      for student in sample_students:
         new_id = generate_roll_id(
             student["roll"], student["grade"], student["section"]
         )
@@ -158,9 +176,9 @@ def init_db():
             ),
         )
     else:
-      # Update the old demo rows in place. This preserves their database row IDs,
+      # Update the old starter rows in place. This preserves their database row IDs,
       # while clearing any old photo so it is not shown beside a different name.
-      for student in demo_students:
+      for student in sample_students:
         new_id = generate_roll_id(
             student["roll"], student["grade"], student["section"]
         )
@@ -181,11 +199,11 @@ def init_db():
             ),
         )
 
-      # If the database had no matching old sample rows, add the demo records
+      # If the database had no matching old sample rows, add the starter records
       # only when there are no student records to avoid duplicating custom data.
       cursor.execute("SELECT COUNT(*) FROM students")
       if cursor.fetchone()[0] == 0:
-        for student in demo_students:
+        for student in sample_students:
           new_id = generate_roll_id(
               student["roll"], student["grade"], student["section"]
           )
@@ -208,7 +226,7 @@ def init_db():
         (migration_key,),
     )
 
-  # Keep all valid saved demo contacts in the same +91XXXXXXXXXX format.
+  # Keep all valid saved student contacts in the same +91XXXXXXXXXX format.
   cursor.execute("SELECT id, emergency_contact FROM students")
   for student_row_id, saved_contact in cursor.fetchall():
     formatted_contact = normalize_indian_phone(saved_contact)
@@ -218,17 +236,62 @@ def init_db():
           (formatted_contact, student_row_id),
       )
 
-  # Registered user accounts. Passwords are stored as salted PBKDF2 hashes,
-  # never as plain text.
+  # Rebuild old account table safely to support Admin and approval status.
+  cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'")
+  old_table = cursor.fetchone()
+  old_columns = []
+  if old_table:
+    cursor.execute("PRAGMA table_info(users)")
+    old_columns = [col[1] for col in cursor.fetchall()]
+
   cursor.execute("""
-      CREATE TABLE IF NOT EXISTS users (
+      CREATE TABLE IF NOT EXISTS users_new (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           full_name TEXT NOT NULL,
           email TEXT NOT NULL UNIQUE COLLATE NOCASE,
-          role TEXT NOT NULL CHECK(role IN ('Nurse', 'Teacher', 'Parent')),
+          role TEXT NOT NULL CHECK(role IN ('Nurse', 'Teacher', 'Parent', 'Admin')),
           password_salt TEXT NOT NULL,
           password_hash TEXT NOT NULL,
-          child_id TEXT
+          child_id TEXT,
+          employee_id TEXT,
+          assigned_grade INTEGER,
+          assigned_section TEXT,
+          status TEXT NOT NULL DEFAULT 'Pending',
+          created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      )
+  """)
+  if old_table:
+    cursor.execute("SELECT COUNT(*) FROM users_new")
+    if cursor.fetchone()[0] == 0:
+      cursor.execute("SELECT * FROM users")
+      for row in cursor.fetchall():
+        old = dict(zip(old_columns, row))
+        role = old.get("role", "Parent")
+        status = old.get("status") or ("Approved" if role == "Admin" else "Pending")
+        cursor.execute(
+            """INSERT OR IGNORE INTO users_new
+               (id, full_name, email, role, password_salt, password_hash,
+                child_id, employee_id, assigned_grade, assigned_section, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (old.get("id"), old.get("full_name", "User"), old.get("email"),
+             role, old.get("password_salt", ""), old.get("password_hash", ""),
+             old.get("child_id"), old.get("employee_id"),
+             old.get("assigned_grade"), old.get("assigned_section"), status)
+        )
+    cursor.execute("DROP TABLE users")
+  cursor.execute("ALTER TABLE users_new RENAME TO users")
+  cursor.execute("DROP INDEX IF EXISTS one_admin_account")
+  cursor.execute("CREATE UNIQUE INDEX one_admin_account ON users(role) WHERE role='Admin'")
+
+  cursor.execute("""
+      CREATE TABLE IF NOT EXISTS activity_history (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          actor_name TEXT NOT NULL,
+          actor_email TEXT,
+          actor_role TEXT,
+          action TEXT NOT NULL,
+          details TEXT,
+          created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
       )
   """)
 
@@ -292,7 +355,7 @@ if "teacher_section" not in st.session_state:
 
 # --- PRE-LOGIN EMERGENCY STUDENT LOOKUP ---
 def show_emergency_student(student):
-  """Display the selected demo student's health details and photo."""
+  """Display the selected student's health details and photo."""
   st.markdown(f"### 🚨 {student[3]}")
   photo_col, info_col = st.columns([1, 3], gap="large")
   with photo_col:
@@ -327,8 +390,10 @@ def emergency_lookup_section():
     if unlock:
       if entered_password == EMERGENCY_LOOKUP_PASSWORD:
         st.session_state.emergency_lookup_unlocked = True
+        log_activity("Emergency lookup unlocked", "Emergency lookup access granted")
         st.rerun()
       else:
+        log_activity("Emergency lookup unlock failed", "Incorrect emergency access password")
         st.error("Incorrect password. Please try again.")
     return
 
@@ -364,6 +429,7 @@ def emergency_lookup_section():
 
   if st.button("🔎 Search", key="emergency_search_button"):
     st.session_state.emergency_search_submitted = True
+    log_activity("Emergency student search", f"Search submitted: {search_query or 'Advanced filters'}")
 
   if st.session_state.get("emergency_search_submitted", False):
     conditions = []
@@ -403,6 +469,10 @@ def emergency_lookup_section():
       if rows:
         st.success(f"Found {len(rows)} matching student record(s).")
         if len(rows) == 1:
+          single_result_key = f"single:{rows[0][0]}"
+          if st.session_state.get("last_emergency_viewed") != single_result_key:
+            log_activity("Emergency student record viewed", "A student health card was opened through emergency lookup")
+            st.session_state.last_emergency_viewed = single_result_key
           show_emergency_student(rows[0])
         else:
           choices = {
@@ -413,11 +483,15 @@ def emergency_lookup_section():
               "Select the student", list(choices.keys()),
               key="emergency_search_result"
           )
+          if st.session_state.get("last_emergency_viewed") != selected_label:
+            log_activity("Emergency student record viewed", "A student health card was opened through emergency lookup")
+            st.session_state.last_emergency_viewed = selected_label
           show_emergency_student(choices[selected_label])
       else:
         st.warning("No matching student found. Try changing your search or filters.")
 
   if st.button("🔒 Lock Emergency Lookup", key="lock_emergency_lookup"):
+    log_activity("Emergency lookup locked", "Emergency lookup session was locked")
     st.session_state.emergency_lookup_unlocked = False
     st.session_state.emergency_search_submitted = False
     st.rerun()
@@ -443,6 +517,169 @@ def verify_password(password, saved_salt, saved_hash):
     return False
 
 
+
+# --- DEFAULT PRINCIPAL / ADMIN ACCOUNT ---
+def ensure_default_admin():
+  """Create the one principal account from private deployment secrets."""
+  admin_email = str(st.secrets.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", ""))).strip().lower()
+  admin_password = str(st.secrets.get("ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", "")))
+  admin_name = str(st.secrets.get("ADMIN_NAME", os.environ.get("ADMIN_NAME", "School Principal"))).strip()
+  if not admin_email or not admin_password:
+    return
+  conn = get_connection()
+  exists = conn.execute("SELECT id FROM users WHERE role='Admin' LIMIT 1").fetchone()
+  if not exists:
+    salt, pw_hash = hash_password(admin_password)
+    try:
+      conn.execute(
+          """INSERT INTO users (full_name,email,role,password_salt,password_hash,status)
+             VALUES (?,?,'Admin',?,?,'Approved')""",
+          (admin_name or "School Principal", admin_email, salt, pw_hash)
+      )
+      conn.commit()
+    except sqlite3.IntegrityError:
+      pass
+  conn.close()
+
+
+ensure_default_admin()
+
+
+def admin_dashboard():
+  st.markdown("## 🛡️ Principal / Admin Dashboard")
+  st.caption("Approve staff and parent accounts, and manage registered users.")
+  conn = get_connection()
+
+  st.subheader("Pending Account Approvals")
+  pending = conn.execute(
+      """SELECT id,full_name,email,role,employee_id,child_id,assigned_grade,
+                assigned_section,created_at
+         FROM users WHERE status='Pending' AND role!='Admin' ORDER BY created_at"""
+  ).fetchall()
+  if not pending:
+    st.info("No accounts are waiting for approval.")
+  for account in pending:
+    uid,name,email,role,emp_id,child_id,grade,section,created = account
+    with st.expander(f"{role} — {name} ({email})"):
+      st.write(f"Employee ID: {emp_id or 'Not applicable'}")
+      st.write(f"Student ID: {child_id or 'Not applicable'}")
+      if role == "Teacher":
+        st.write(f"Assigned class: Grade {grade}{section}")
+      st.caption(f"Registered: {created or 'Date unavailable'}")
+      c1,c2=st.columns(2)
+      with c1:
+        if st.button("Approve",key=f"approve_{uid}",use_container_width=True):
+          conn.execute("UPDATE users SET status='Approved' WHERE id=? AND role!='Admin'",(uid,))
+          conn.commit()
+          log_activity("Account approved", f"Approved {role} account: {email}")
+          st.rerun()
+      with c2:
+        if st.button("Reject & Delete",key=f"reject_{uid}",use_container_width=True):
+          conn.execute("DELETE FROM users WHERE id=? AND role!='Admin'",(uid,))
+          conn.commit()
+          log_activity("Account rejected and deleted", f"Deleted {role} account: {email}")
+          st.rerun()
+
+  st.divider()
+  st.subheader("All Accounts")
+  accounts=conn.execute(
+      """SELECT id,full_name,email,role,status,employee_id,child_id,
+                assigned_grade,assigned_section FROM users ORDER BY role,full_name"""
+  ).fetchall()
+  for row in accounts:
+    uid,name,email,role,status,emp_id,child_id,grade,section=row
+    if role == "Admin":
+      st.markdown(f"**{name}** · {email} · Principal Admin (fixed account)")
+      continue
+    detail=f"{role} · {status}"
+    if role == "Teacher":
+      detail += f" · Grade {grade}{section}"
+    st.markdown(f"**{name}** · {email} · {detail}")
+    with st.expander(f"Manage {name}"):
+      if status == "Pending" and st.button("Approve account",key=f"allapprove_{uid}"):
+        conn.execute("UPDATE users SET status='Approved' WHERE id=?",(uid,))
+        conn.commit()
+        log_activity("Account approved", f"Approved {role} account: {email}")
+        st.rerun()
+      if st.button("Delete account",key=f"delete_{uid}"):
+        conn.execute("DELETE FROM users WHERE id=? AND role!='Admin'",(uid,))
+        conn.commit()
+        log_activity("Account deleted", f"Deleted {role} account: {email}")
+        st.rerun()
+
+  st.divider()
+  st.subheader("Create an Account")
+  with st.form("admin_create_account"):
+    name=st.text_input("Full Name")
+    email=st.text_input("Email Address")
+    role=st.selectbox("Role",["Nurse","Teacher","Parent"])
+    employee_id=""
+    child_id=""
+    grade=None
+    section=None
+    if role in ("Nurse","Teacher"):
+      employee_id=st.text_input("Employee ID")
+    if role=="Teacher":
+      c1,c2=st.columns(2)
+      with c1:
+        grade=st.selectbox("Assigned Grade",list(range(1,13)),key="admin_grade")
+      with c2:
+        section=st.selectbox("Assigned Section",["A","B","C","D","E"],key="admin_section")
+    if role=="Parent":
+      child_id=st.text_input("Child's Student ID")
+    password=st.text_input("Temporary Password",type="password")
+    submit=st.form_submit_button("Create Approved Account")
+  if submit:
+    clean_email=email.strip().lower()
+    if not name.strip() or not clean_email or len(password)<8:
+      st.error("Enter a name, email, and password of at least 8 characters.")
+    elif role in ("Nurse","Teacher") and not employee_id.strip():
+      st.error("Employee ID is required.")
+    else:
+      linked=True
+      if role=="Parent":
+        linked=conn.execute("SELECT 1 FROM students WHERE id_number=? COLLATE NOCASE",(child_id.strip().lower(),)).fetchone()
+      if not linked:
+        st.error("Student ID not found.")
+      else:
+        salt,pw_hash=hash_password(password)
+        try:
+          conn.execute(
+              """INSERT INTO users
+                 (full_name,email,role,password_salt,password_hash,child_id,
+                  employee_id,assigned_grade,assigned_section,status)
+                 VALUES (?,?,?,?,?,?,?,?,?,'Approved')""",
+              (name.strip(),clean_email,role,salt,pw_hash,
+               child_id.strip().lower() if role=="Parent" else None,
+               employee_id.strip() or None,grade,section)
+          )
+          conn.commit()
+          log_activity("Account created by Admin", f"Created approved {role} account: {clean_email}")
+          st.success("Approved account created.")
+          st.rerun()
+        except sqlite3.IntegrityError:
+          st.error("That email address is already registered.")
+
+  st.divider()
+  st.subheader("📜 Activity History / Audit Log")
+  st.caption("A record of account and app actions. Passwords and medical details are never recorded here.")
+  history_rows = conn.execute(
+      """SELECT created_at, actor_name, actor_email, actor_role, action, details
+         FROM activity_history ORDER BY id DESC LIMIT 300"""
+  ).fetchall()
+  if history_rows:
+    st.dataframe(
+        [{"Date & Time": r[0], "User": r[1], "Email": r[2] or "—",
+          "Role": r[3] or "—", "Action": r[4], "Details": r[5] or "—"}
+         for r in history_rows],
+        use_container_width=True, hide_index=True
+    )
+    st.caption("Showing the latest 300 events.")
+  else:
+    st.info("No activity has been recorded yet.")
+  conn.close()
+
+
 # --- LOGIN AND REGISTRATION PAGE ---
 def login_page():
   st.markdown(
@@ -461,10 +698,21 @@ def login_page():
   with col2:
     st.markdown("### Welcome")
     st.caption("Create an account first, then sign in using your registered email and password.")
+    if not st.secrets.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", "")) or not st.secrets.get("ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", "")):
+      st.info("Principal Admin login is not configured. Set ADMIN_EMAIL and ADMIN_PASSWORD in Streamlit Secrets before deployment.")
 
-    login_tab, register_tab = st.tabs(["🔐 Sign In", "📝 Create Account"])
+    if st.session_state.pop("switch_to_signin", False):
+      st.session_state.auth_view = "Sign In"
 
-    with login_tab:
+    auth_view = st.radio(
+        "Choose an option",
+        ["Sign In", "Create Account"],
+        horizontal=True,
+        key="auth_view",
+        label_visibility="collapsed"
+    )
+
+    if auth_view == "Sign In":
       with st.form("login_form"):
         login_email = st.text_input("Registered Email Address", placeholder="name@example.com")
         login_password = st.text_input("Password", type="password")
@@ -478,13 +726,14 @@ def login_page():
           conn = get_connection()
           account = conn.execute(
               """SELECT full_name, email, role, password_salt,
-                        password_hash, child_id
+                        password_hash, child_id, assigned_grade,
+                        assigned_section, employee_id, status
                  FROM users WHERE email = ? COLLATE NOCASE""",
               (clean_email,)
           ).fetchone()
           conn.close()
 
-          if account and verify_password(login_password, account[3], account[4]):
+          if account and verify_password(login_password, account[3], account[4]) and account[9] == 'Approved':
             st.session_state.user = {
                 "name": account[0],
                 "email": account[1],
@@ -492,23 +741,52 @@ def login_page():
             }
             if account[2] == "Parent":
               st.session_state.user["child_id"] = account[5]
+            elif account[2] == "Teacher":
+              st.session_state.user["assigned_grade"] = account[6]
+              st.session_state.user["assigned_section"] = account[7]
+            elif account[2] == "Nurse":
+              st.session_state.user["employee_id"] = account[8]
+            elif account[2] == "Admin":
+              st.session_state.user["is_principal_admin"] = True
             st.session_state.logged_in = True
+            log_activity("Successful login", f"Signed in as {account[2]}")
             st.rerun()
+          elif account and account[9] != "Approved" and verify_password(login_password, account[3], account[4]):
+            st.warning("Your account is awaiting approval by the School Principal.")
           else:
+            log_activity("Failed login attempt", f"Attempted email: {clean_email}",
+                         actor={"name": "Unknown user", "email": clean_email, "role": "Guest"})
             st.error("Incorrect email or password. If you are new, create an account first.")
 
-    with register_tab:
+    else:
       with st.form("register_form"):
         full_name = st.text_input("Full Name", placeholder="Enter your full name")
         register_email = st.text_input("Email Address", placeholder="name@example.com")
         register_role = st.selectbox("Account Role", ["Parent", "Nurse", "Teacher"])
+
         child_id = ""
+        employee_id = ""
+        assigned_grade = None
+        assigned_section = None
+
         if register_role == "Parent":
           child_id = st.text_input(
               "Child's Student ID",
               placeholder="e.g. gj_12_6d",
-              help="Parents must link their account to their child's student record."
+              help="Enter the Student ID provided by your school."
           )
+        elif register_role in ("Nurse", "Teacher"):
+          employee_id = st.text_input(
+              "Employee ID",
+              placeholder="Enter your school-issued employee ID"
+          )
+          if register_role == "Teacher":
+            class_col, section_col = st.columns(2)
+            with class_col:
+              assigned_grade = st.selectbox("Assigned Grade", list(range(1, 13)))
+            with section_col:
+              assigned_section = st.selectbox("Assigned Section", ["A", "B", "C", "D", "E"])
+
         new_password = st.text_input("Create Password", type="password")
         confirm_password = st.text_input("Confirm Password", type="password")
         register_submit = st.form_submit_button("Create Account", use_container_width=True)
@@ -517,10 +795,13 @@ def login_page():
         clean_name = full_name.strip()
         clean_email = register_email.strip().lower()
         clean_child_id = child_id.strip().lower() if register_role == "Parent" else None
+        clean_employee_id = employee_id.strip() if register_role in ("Nurse", "Teacher") else None
 
         if not clean_name or not clean_email or not new_password or not confirm_password:
           st.error("Please complete all required fields.")
-        elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", clean_email):
+        elif register_role in ("Nurse", "Teacher") and not clean_employee_id:
+          st.error("Employee ID is required for Nurses and Teachers.")
+        elif not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", clean_email):
           st.error("Enter a valid email address.")
         elif len(new_password) < 8:
           st.error("Choose a password with at least 8 characters.")
@@ -548,19 +829,25 @@ def login_page():
             try:
               conn.execute(
                   """INSERT INTO users
-                     (full_name, email, role, password_salt, password_hash, child_id)
-                     VALUES (?, ?, ?, ?, ?, ?)""",
-                  (clean_name, clean_email, register_role, salt, password_hash, clean_child_id)
+                     (full_name, email, role, password_salt, password_hash,
+                      child_id, employee_id, assigned_grade, assigned_section, status)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'Pending')""",
+                  (clean_name, clean_email, register_role, salt, password_hash,
+                   clean_child_id, clean_employee_id, assigned_grade, assigned_section)
               )
               conn.commit()
-              st.success("Account created successfully! Go to the Sign In tab and log in with your email and password.")
+              log_activity("Account registration", f"New {register_role} account requested: {clean_email}",
+                           actor={"name": clean_name, "email": clean_email, "role": register_role})
+              st.success("Account request submitted. Please sign in after the School Principal approves it.")
+              st.session_state.switch_to_signin = True
+              st.rerun()
             except sqlite3.IntegrityError:
               st.error("This email is already registered. Please sign in.")
           conn.close()
 
     st.caption(
-        "For this school-project demo, account creation is self-service. "
-        "A real school deployment should verify parent–student links and approve staff accounts."
+        "For a real school deployment, employee IDs and parent–student links must be verified "
+        "by the school before accounts are trusted."
     )
 
 
@@ -603,6 +890,7 @@ def render_student_editor(conn, student, key_prefix="edit"):
                edit_vax, edit_meds, edit_photo.getvalue(), student[0])
           )
           conn.commit()
+          log_activity("Student record edited", f"Updated health card for {student[3]} (Student ID: {student[1]})")
           st.success("Student health record and photo updated.")
           st.rerun()
         else:
@@ -613,6 +901,7 @@ def render_student_editor(conn, student, key_prefix="edit"):
                edit_vax, edit_meds, student[0])
           )
           conn.commit()
+          log_activity("Student record edited", f"Updated health card for {student[3]} (Student ID: {student[1]})")
           st.success("Student health record updated.")
           st.rerun()
 
@@ -748,6 +1037,7 @@ def nurse_dashboard():
                   if new_photo:
                     conn.execute("UPDATE students SET photo = ? WHERE id = ?", (new_photo.getvalue(), student[0]))
                     conn.commit()
+                    log_activity("Student photo updated", f"Photo updated for {student[3]} (Student ID: {student[1]})")
                     st.success("Student photo updated.")
                     st.rerun()
                   else:
@@ -765,6 +1055,7 @@ def nurse_dashboard():
               if st.button("Remove Student (Left School)", key=f"nurse_rem_{student[0]}"):
                 conn.execute("DELETE FROM students WHERE id = ?", (student[0],))
                 conn.commit()
+                log_activity("Student record deleted", f"Removed {student[3]} (Student ID: {student[1]})")
                 st.success(f"Removed {student[3]}")
                 st.rerun()
         else:
@@ -812,6 +1103,7 @@ def nurse_dashboard():
                  s_photo.getvalue() if s_photo else None),
             )
             conn.commit()
+            log_activity("Student record added", f"Added {s_name} (Student ID: {s_id_num})")
             st.success(f"Added {s_name} with ID `{s_id_num}` to Grade {s_grade}{s_section}!")
             st.rerun()
           except sqlite3.IntegrityError:
@@ -877,6 +1169,7 @@ def nurse_dashboard():
                 ("School Nurse", sel_g, sel_sec, target_audience, target_student, msg_text.strip()),
             )
             conn.commit()
+            log_activity("Message sent", f"Message about {target_student} sent to {target_audience}")
             st.success(f"Message sent to {target_audience} successfully!")
             st.rerun()
 
@@ -887,33 +1180,17 @@ def nurse_dashboard():
 def teacher_dashboard():
   st.markdown("## 📚 Teacher Dashboard — Class Roster & Health Records")
 
-  with st.container():
-    st.markdown("### ⚙️ Select Your Assigned Class")
-    col1, col2 = st.columns(2)
-    with col1:
-      selected_grade = st.selectbox(
-          "Select Grade", list(range(1, 13)),
-          index=st.session_state.teacher_grade - 1, key="t_grade_sel"
-      )
-    with col2:
-      sections_list = ["A", "B", "C", "D", "E"]
-      selected_section = st.selectbox(
-          "Select Section", sections_list,
-          index=sections_list.index(st.session_state.teacher_section), key="t_sec_sel"
-      )
-
-    st.session_state.teacher_grade = selected_grade
-    st.session_state.teacher_section = selected_section
-
-  grade = st.session_state.teacher_grade
-  section = st.session_state.teacher_section
+  grade = st.session_state.user.get("assigned_grade")
+  section = st.session_state.user.get("assigned_section")
+  if grade is None or section not in ["A", "B", "C", "D", "E"]:
+    st.error("Your account does not have a valid assigned class. Contact the school administrator.")
+    return
   st.markdown("---")
   st.markdown(f"### Currently Managing: **Grade {grade}{section}**")
 
   conn = get_connection()
-  tab1, tab2, tab3, tab4 = st.tabs([
+  tab1, tab3, tab4 = st.tabs([
       "👥 Class Roster",
-      "➕ Add/Remove Students",
       "🔎 Search Students",
       "📨 Inbox & Messages"
   ])
@@ -937,85 +1214,14 @@ def teacher_dashboard():
           with photo_col:
             show_student_photo(student[11] if len(student) > 11 else None, student[3])
           with info_col:
-            updated_photo = st.file_uploader(
-              "Upload / Replace Student Photo",
-              type=["jpg", "jpeg", "png", "webp"],
-                key=f"teacher_photo_{student[0]}"
-            )
-            if st.button("Save Photo", key=f"teacher_save_photo_{student[0]}"):
-              if updated_photo:
-                conn.execute("UPDATE students SET photo = ? WHERE id = ?", (updated_photo.getvalue(), student[0]))
-                conn.commit()
-                st.success("Student photo updated.")
-                st.rerun()
-              else:
-                st.warning("Choose an image first.")
             st.markdown(f"""
               - **Student ID:** `{student[1]}`
               - **Roll Number:** {student[2]}
               - **Allergies:** {student[7]}
               - **Emergency Contact:** {normalize_indian_phone(student[8]) or student[8] or 'Not provided'}
             """)
-            render_student_editor(conn, student, "teacher")
     else:
       st.info(f"No students found in Grade {grade}{section}. Use the 'Add/Remove Students' tab to add your class list.")
-
-  with tab2:
-    st.subheader(f"Manage Students in Grade {grade}{section}")
-    with st.form("teacher_add_student"):
-      t_name = st.text_input("Student Name")
-      t_roll = st.number_input("Roll Number", min_value=1, step=1, value=1)
-      t_blood = st.text_input("Blood Group")
-      t_emergency = st.text_input("Emergency Contact", placeholder="+91XXXXXXXXXX", help="Enter a 10-digit Indian mobile number; +91 will be added automatically.")
-      t_allergies = st.text_area("Allergies")
-      t_vax = st.text_area("Vaccination History")
-      t_meds = st.text_area("Medications")
-      t_photo = st.file_uploader(
-          "Upload Student Photo (JPG, JPEG, PNG or WEBP)",
-          type=["jpg", "jpeg", "png", "webp"],
-          help="Choose a clear photo to help authorised staff identify the student.",
-          key="teacher_student_photo"
-      )
-
-      if st.form_submit_button("Add Student to My Class"):
-        formatted_t_emergency = normalize_indian_phone(t_emergency)
-        if t_emergency.strip() and not formatted_t_emergency:
-          st.error("Enter a valid 10-digit Indian mobile number.")
-        elif t_name.strip():
-          t_id_num = generate_roll_id(t_roll, grade, section)
-          try:
-            conn.execute(
-                """
-                INSERT INTO students
-                (id_number, roll_number, name, grade, section, blood_group,
-                 allergies, emergency_contact, vaccination_history, medications, photo)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (t_id_num, t_roll, t_name.strip(), grade, section, t_blood,
-                 t_allergies, formatted_t_emergency or '', t_vax, t_meds,
-                 t_photo.getvalue() if t_photo else None),
-            )
-            conn.commit()
-            st.success(f"Added {t_name} with ID `{t_id_num}` to Grade {grade}{section}!")
-            st.rerun()
-          except sqlite3.IntegrityError:
-            st.error(f"Error: Roll number {t_roll} already exists in Grade {grade}{section}.")
-        else:
-          st.error("Student Name is required.")
-
-    st.markdown("#### Remove Student from Roster")
-    students_to_remove = conn.execute(
-        "SELECT id, name FROM students WHERE grade = ? AND section = ?",
-        (grade, section)
-    ).fetchall()
-    if students_to_remove:
-      student_options = {student[1]: student[0] for student in students_to_remove}
-      to_remove = st.selectbox("Select Student to Remove", list(student_options.keys()))
-      if st.button("Remove Selected Student"):
-        conn.execute("DELETE FROM students WHERE id = ?", (student_options[to_remove],))
-        conn.commit()
-        st.success(f"Removed {to_remove}")
-        st.rerun()
 
   with tab3:
     render_student_search(
@@ -1077,6 +1283,7 @@ def teacher_dashboard():
                  target_audience, target_student, msg_text.strip()),
             )
             conn.commit()
+            log_activity("Message sent", f"Message about {target_student} sent to {target_audience}")
             st.success(f"Message sent to {target_audience} successfully!")
             st.rerun()
 
@@ -1138,6 +1345,7 @@ def main():
     st.sidebar.markdown(f"**User:** {st.session_state.user['name']}")
     st.sidebar.markdown(f"**Role:** {st.session_state.user['role']}")
     if st.sidebar.button("Logout"):
+      log_activity("Logout", "User signed out")
       st.session_state.logged_in = False
       st.session_state.user = None
       st.session_state.emergency_lookup_unlocked = False
@@ -1154,6 +1362,8 @@ def main():
       teacher_dashboard()
     elif role == "Parent":
       parent_dashboard()
+    elif role == "Admin":
+      admin_dashboard()
 
 
 if __name__ == "__main__":
