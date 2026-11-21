@@ -1,5 +1,8 @@
 import sqlite3
 import re
+import hashlib
+import secrets
+import hmac
 import streamlit as st
 
 # --- PAGE CONFIGURATION ---
@@ -215,6 +218,20 @@ def init_db():
           (formatted_contact, student_row_id),
       )
 
+  # Registered user accounts. Passwords are stored as salted PBKDF2 hashes,
+  # never as plain text.
+  cursor.execute("""
+      CREATE TABLE IF NOT EXISTS users (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          full_name TEXT NOT NULL,
+          email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+          role TEXT NOT NULL CHECK(role IN ('Nurse', 'Teacher', 'Parent')),
+          password_salt TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          child_id TEXT
+      )
+  """)
+
   conn.commit()
   conn.close()
 
@@ -406,61 +423,145 @@ def emergency_lookup_section():
     st.rerun()
 
 
-# --- LOGIN PAGE ---
+# --- ACCOUNT SECURITY HELPERS ---
+def hash_password(password, salt=None):
+  """Create a salted PBKDF2-HMAC-SHA256 password hash."""
+  salt_bytes = salt if salt is not None else secrets.token_bytes(16)
+  password_hash = hashlib.pbkdf2_hmac(
+      "sha256", password.encode("utf-8"), salt_bytes, 310000
+  )
+  return salt_bytes.hex(), password_hash.hex()
+
+
+def verify_password(password, saved_salt, saved_hash):
+  """Verify a password against its saved salt and hash."""
+  try:
+    salt_bytes = bytes.fromhex(saved_salt)
+    _, candidate_hash = hash_password(password, salt_bytes)
+    return hmac.compare_digest(candidate_hash, saved_hash)
+  except (TypeError, ValueError):
+    return False
+
+
+# --- LOGIN AND REGISTRATION PAGE ---
 def login_page():
-  st.markdown("<h1 style='text-align: center;'>🏥 School Health Passport</h1>", unsafe_allow_html=True)
-  st.markdown("<p style='text-align: center; color: #666;'>School Health & Wellness Portal</p>", unsafe_allow_html=True)
+  st.markdown(
+      "<h1 style='text-align: center;'>🏥 School Health Passport</h1>",
+      unsafe_allow_html=True
+  )
+  st.markdown(
+      "<p style='text-align: center; color: #666;'>School Health & Wellness Portal</p>",
+      unsafe_allow_html=True
+  )
 
   with st.expander("🚨 Emergency Student Lookup (Before Login)", expanded=False):
     emergency_lookup_section()
 
   _, col2, _ = st.columns([1, 2, 1])
-
   with col2:
-    st.markdown("### Sign In Portal")
-    with st.expander("ℹ️ Demo Accounts / Hints"):
-      st.markdown("""
-            **Nurse:** \`nurse@school.com\` / \`password123\`  
-            **Teacher:** \`teacher@school.com\` / \`password123\`  
-            **Parent:** Select **Parent** and enter your child's **Student ID** (e.g., \`gj_14_6d\`) directly to view their health passport.
-            """)
+    st.markdown("### Welcome")
+    st.caption("Create an account first, then sign in using your registered email and password.")
 
-    # Use a callback or session-state bound selectbox to prevent form caching issues
-    selected_role = st.selectbox("Select Role", ["Nurse", "Teacher", "Parent"], key="login_role_select")
+    login_tab, register_tab = st.tabs(["🔐 Sign In", "📝 Create Account"])
 
-    with st.form("login_form"):
-      if selected_role == "Parent":
-        student_id_input = st.text_input("Child's Student ID (e.g., gj_14_6d)", value="gj_14_6d")
-      else:
-        email = st.text_input("Email Address", value="nurse@school.com" if selected_role == "Nurse" else "teacher@school.com")
-        password = st.text_input("Password", type="password", value="password123")
+    with login_tab:
+      with st.form("login_form"):
+        login_email = st.text_input("Registered Email Address", placeholder="name@example.com")
+        login_password = st.text_input("Password", type="password")
+        login_submit = st.form_submit_button("Sign In", use_container_width=True)
 
-      submit = st.form_submit_button("Sign In")
-
-      if submit:
-        conn = get_connection()
-        if selected_role == "Nurse":
-          st.session_state.user = {"name": "School Nurse", "role": "Nurse", "email": email}
-          st.session_state.logged_in = True
-          st.rerun()
-        elif selected_role == "Teacher":
-          st.session_state.user = {"name": "Teacher Portal", "role": "Teacher", "email": email}
-          st.session_state.logged_in = True
-          st.rerun()
+      if login_submit:
+        clean_email = login_email.strip().lower()
+        if not clean_email or not login_password:
+          st.error("Enter both your registered email address and password.")
         else:
-          # Parent login using Student ID
-          student_record = conn.execute("SELECT * FROM students WHERE id_number = ?", (student_id_input.strip().lower(),)).fetchone()
-          if student_record:
+          conn = get_connection()
+          account = conn.execute(
+              """SELECT full_name, email, role, password_salt,
+                        password_hash, child_id
+                 FROM users WHERE email = ? COLLATE NOCASE""",
+              (clean_email,)
+          ).fetchone()
+          conn.close()
+
+          if account and verify_password(login_password, account[3], account[4]):
             st.session_state.user = {
-                "name": f"Parent of {student_record[3]}", 
-                "role": "Parent", 
-                "child_id": student_record[1]
+                "name": account[0],
+                "email": account[1],
+                "role": account[2],
             }
+            if account[2] == "Parent":
+              st.session_state.user["child_id"] = account[5]
             st.session_state.logged_in = True
             st.rerun()
           else:
-            st.error("Invalid Student ID. Please check your child's ID and try again.")
-        conn.close()
+            st.error("Incorrect email or password. If you are new, create an account first.")
+
+    with register_tab:
+      with st.form("register_form"):
+        full_name = st.text_input("Full Name", placeholder="Enter your full name")
+        register_email = st.text_input("Email Address", placeholder="name@example.com")
+        register_role = st.selectbox("Account Role", ["Parent", "Nurse", "Teacher"])
+        child_id = ""
+        if register_role == "Parent":
+          child_id = st.text_input(
+              "Child's Student ID",
+              placeholder="e.g. gj_12_6d",
+              help="Parents must link their account to their child's student record."
+          )
+        new_password = st.text_input("Create Password", type="password")
+        confirm_password = st.text_input("Confirm Password", type="password")
+        register_submit = st.form_submit_button("Create Account", use_container_width=True)
+
+      if register_submit:
+        clean_name = full_name.strip()
+        clean_email = register_email.strip().lower()
+        clean_child_id = child_id.strip().lower() if register_role == "Parent" else None
+
+        if not clean_name or not clean_email or not new_password or not confirm_password:
+          st.error("Please complete all required fields.")
+        elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", clean_email):
+          st.error("Enter a valid email address.")
+        elif len(new_password) < 8:
+          st.error("Choose a password with at least 8 characters.")
+        elif new_password != confirm_password:
+          st.error("The passwords do not match.")
+        else:
+          conn = get_connection()
+          existing_account = conn.execute(
+              "SELECT 1 FROM users WHERE email = ? COLLATE NOCASE",
+              (clean_email,)
+          ).fetchone()
+          linked_student = None
+          if register_role == "Parent":
+            linked_student = conn.execute(
+                "SELECT id_number FROM students WHERE id_number = ? COLLATE NOCASE",
+                (clean_child_id,)
+            ).fetchone()
+
+          if existing_account:
+            st.error("An account with this email already exists. Please sign in instead.")
+          elif register_role == "Parent" and not linked_student:
+            st.error("Student ID not found. Check the ID provided by your school.")
+          else:
+            salt, password_hash = hash_password(new_password)
+            try:
+              conn.execute(
+                  """INSERT INTO users
+                     (full_name, email, role, password_salt, password_hash, child_id)
+                     VALUES (?, ?, ?, ?, ?, ?)""",
+                  (clean_name, clean_email, register_role, salt, password_hash, clean_child_id)
+              )
+              conn.commit()
+              st.success("Account created successfully! Go to the Sign In tab and log in with your email and password.")
+            except sqlite3.IntegrityError:
+              st.error("This email is already registered. Please sign in.")
+          conn.close()
+
+    st.caption(
+        "For this school-project demo, account creation is self-service. "
+        "A real school deployment should verify parent–student links and approve staff accounts."
+    )
 
 
 # --- STUDENT PHOTO DISPLAY ---
