@@ -863,8 +863,8 @@ def login_page():
         clean_child_id = child_id.strip().lower() if register_role == "Parent" else None
         clean_employee_id = normalize_employee_id(employee_id) if register_role in ("Nurse", "Teacher") else None
 
-                correct_school_code = str(
-            st.secrets.get("SCHOOL_CODE", "")
+        correct_school_code = str(
+          st.secrets.get("SCHOOL_CODE", "")
         ).strip()
 
         if not school_code.strip():
