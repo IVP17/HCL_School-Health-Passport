@@ -770,6 +770,7 @@ def login_page():
     if auth_view == "Sign In":
       with st.form("login_form"):
         login_email = st.text_input("Registered Email Address", placeholder="name@example.com")
+                  st.caption("Principal: Sign in using the Admin email and password configured by the school.")
         login_password = st.text_input("Password", type="password")
         login_submit = st.form_submit_button("Sign In", use_container_width=True)
 
@@ -821,6 +822,11 @@ def login_page():
           "Account Role", ["Parent", "Nurse", "Teacher"], key="registration_role"
       )
       with st.form("register_form"):
+                  school_code = st.text_input(
+            "School Code",
+            placeholder="Enter the school registration code",
+            type="password"
+        )
         full_name = st.text_input("Full Name", placeholder="Enter your full name")
         register_email = st.text_input("Email Address", placeholder="name@example.com")
 
@@ -857,7 +863,17 @@ def login_page():
         clean_child_id = child_id.strip().lower() if register_role == "Parent" else None
         clean_employee_id = normalize_employee_id(employee_id) if register_role in ("Nurse", "Teacher") else None
 
-        if not clean_name or not clean_email or not new_password or not confirm_password:
+                correct_school_code = str(
+            st.secrets.get("SCHOOL_CODE", "")
+        ).strip()
+
+        if not school_code.strip():
+          st.error("Please enter the School Code.")
+        elif not correct_school_code:
+          st.error("School registration is not configured. Contact the Principal.")
+        elif school_code.strip() != correct_school_code:
+          st.error("Invalid School Code. Please contact your school.")
+        elif not clean_name or not clean_email or not new_password or not confirm_password:
           st.error("Please complete all required fields.")
         elif register_role in ("Nurse", "Teacher") and not clean_employee_id:
           st.error("Employee ID is required for Nurses and Teachers.")
