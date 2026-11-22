@@ -863,7 +863,7 @@ def login_page():
           st.error("Employee ID is required for Nurses and Teachers.")
         elif register_role in ("Nurse", "Teacher") and not valid_employee_id(clean_employee_id):
           st.error("Enter your school-issued Employee ID, for example EMP001.")
-        elif not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", clean_email):
+        elif not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", clean_email):
           st.error("Enter a valid email address.")
         elif len(new_password) < 8:
           st.error("Choose a password with at least 8 characters.")
