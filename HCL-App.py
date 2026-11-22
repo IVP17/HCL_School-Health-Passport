@@ -822,7 +822,7 @@ def login_page():
           "Account Role", ["Parent", "Nurse", "Teacher"], key="registration_role"
       )
       with st.form("register_form"):
-                  school_code = st.text_input(
+        school_code = st.text_input(
             "School Code",
             placeholder="Enter the school registration code",
             type="password"
