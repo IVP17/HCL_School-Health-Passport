@@ -554,27 +554,101 @@ def verify_password(password, saved_salt, saved_hash):
 
 
 # --- DEFAULT PRINCIPAL / ADMIN ACCOUNT ---
+
 def ensure_default_admin():
-  """Create the one principal account from private deployment secrets."""
-  admin_email = str(st.secrets.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", ""))).strip().lower()
-  admin_password = str(st.secrets.get("ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", "")))
-  admin_name = str(st.secrets.get("ADMIN_NAME", os.environ.get("ADMIN_NAME", "School Principal"))).strip()
+  """Create or synchronise the Admin account with Streamlit Secrets."""
+
+  admin_email = str(
+      st.secrets.get("ADMIN_EMAIL", os.environ.get("ADMIN_EMAIL", ""))
+  ).strip().lower()
+
+  admin_password = str(
+      st.secrets.get("ADMIN_PASSWORD", os.environ.get("ADMIN_PASSWORD", ""))
+  )
+
+  admin_name = str(
+      st.secrets.get(
+          "ADMIN_NAME",
+          os.environ.get("ADMIN_NAME", "School Principal")
+      )
+  ).strip() or "School Principal"
+
   if not admin_email or not admin_password:
     return
+
   conn = get_connection()
-  exists = conn.execute("SELECT id FROM users WHERE role='Admin' LIMIT 1").fetchone()
-  if not exists:
-    salt, pw_hash = hash_password(admin_password)
-    try:
+
+  try:
+    admin = conn.execute(
+        """SELECT id, full_name, email, password_salt, password_hash
+           FROM users WHERE role = 'Admin' LIMIT 1"""
+    ).fetchone()
+
+    # Create the Admin account if it does not exist.
+    if not admin:
+      salt, pw_hash = hash_password(admin_password)
+
       conn.execute(
-          """INSERT INTO users (full_name,email,role,password_salt,password_hash,status)
-             VALUES (?,?,'Admin',?,?,'Approved')""",
-          (admin_name or "School Principal", admin_email, salt, pw_hash)
+          """INSERT INTO users
+             (full_name, email, role, password_salt, password_hash, status)
+             VALUES (?, ?, 'Admin', ?, ?, 'Approved')""",
+          (admin_name, admin_email, salt, pw_hash)
       )
       conn.commit()
-    except sqlite3.IntegrityError:
-      pass
-  conn.close()
+      return
+
+    admin_id, old_name, old_email, old_salt, old_hash = admin
+
+    # Prevent changing the Admin email to one already used by another account.
+    email_in_use = conn.execute(
+        """SELECT id FROM users
+           WHERE email = ? COLLATE NOCASE AND id != ?""",
+        (admin_email, admin_id)
+    ).fetchone()
+
+    if email_in_use:
+      st.error(
+          "Admin credentials could not be updated: "
+          "the configured Admin email is already used by another account."
+      )
+      return
+
+    # Check whether the configured password matches the saved password.
+    password_matches = verify_password(
+        admin_password, old_salt, old_hash
+    )
+
+    # Update only when something has actually changed.
+    if (
+        old_name != admin_name
+        or old_email.lower() != admin_email
+        or not password_matches
+    ):
+      salt, pw_hash = hash_password(admin_password)
+
+      conn.execute(
+          """UPDATE users
+             SET full_name = ?,
+                 email = ?,
+                 password_salt = ?,
+                 password_hash = ?,
+                 status = 'Approved'
+             WHERE id = ? AND role = 'Admin'""",
+          (admin_name, admin_email, salt, pw_hash, admin_id)
+      )
+      conn.commit()
+    else:
+      conn.execute(
+          "UPDATE users SET status = 'Approved' WHERE id = ?",
+          (admin_id,)
+      )
+      conn.commit()
+
+  except sqlite3.IntegrityError:
+    st.error("Could not update the Admin account because of a database conflict.")
+
+  finally:
+    conn.close()
 
 
 ensure_default_admin()
