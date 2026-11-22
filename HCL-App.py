@@ -770,7 +770,7 @@ def login_page():
     if auth_view == "Sign In":
       with st.form("login_form"):
         login_email = st.text_input("Registered Email Address", placeholder="name@example.com")
-                  st.caption("Principal: Sign in using the Admin email and password configured by the school.")
+        st.caption("Principal: Sign in using the Admin email and password configured by the school.")
         login_password = st.text_input("Password", type="password")
         login_submit = st.form_submit_button("Sign In", use_container_width=True)
 
