@@ -12,12 +12,15 @@ st.set_page_config(
 )
 
 # --- DATABASE SETUP & MIGRATION ---
-DB_NAME = "school_health.db"
+DB_NAME = os.environ.get("SCHOOL_HEALTH_DB_PATH", "school_health.db")
 # Password for the pre-login emergency lookup.
 EMERGENCY_LOOKUP_PASSWORD = "HealthSOS"
 
 
 def get_connection():
+  # Keep the database at the same configured path between app sessions.
+  # Set SCHOOL_HEALTH_DB_PATH to a persistent mounted volume when hosting.
+  os.makedirs(os.path.dirname(os.path.abspath(DB_NAME)), exist_ok=True)
   conn = sqlite3.connect(DB_NAME, check_same_thread=False, timeout=30)
   conn.execute("PRAGMA busy_timeout = 30000")
   return conn
@@ -271,17 +274,39 @@ def init_db():
         cursor.execute(
             """INSERT OR IGNORE INTO users_new
                (id, full_name, email, role, password_salt, password_hash,
-                child_id, employee_id, assigned_grade, assigned_section, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                child_id, employee_id, assigned_grade, assigned_section, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (old.get("id"), old.get("full_name", "User"), old.get("email"),
              role, old.get("password_salt", ""), old.get("password_hash", ""),
              old.get("child_id"), old.get("employee_id"),
-             old.get("assigned_grade"), old.get("assigned_section"), status)
+             old.get("assigned_grade"), old.get("assigned_section"), status,
+             old.get("created_at"))
         )
     cursor.execute("DROP TABLE users")
   cursor.execute("ALTER TABLE users_new RENAME TO users")
   cursor.execute("DROP INDEX IF EXISTS one_admin_account")
   cursor.execute("CREATE UNIQUE INDEX one_admin_account ON users(role) WHERE role='Admin'")
+
+  # Employee IDs are unique across Nurses and Teachers, ignoring letter case.
+  # Preserve older accounts if duplicate IDs exist; clear duplicate values so
+  # the Principal can review and correct those accounts.
+  duplicate_ids = cursor.execute(
+      """SELECT employee_id FROM users
+         WHERE employee_id IS NOT NULL AND TRIM(employee_id) != ''
+         GROUP BY employee_id COLLATE NOCASE HAVING COUNT(*) > 1"""
+  ).fetchall()
+  for (duplicate_id,) in duplicate_ids:
+    duplicate_rows = cursor.execute(
+        """SELECT id FROM users WHERE employee_id = ? COLLATE NOCASE
+           ORDER BY id""", (duplicate_id,)
+    ).fetchall()
+    for (duplicate_user_id,) in duplicate_rows[1:]:
+      cursor.execute("UPDATE users SET employee_id=NULL WHERE id=?", (duplicate_user_id,))
+  cursor.execute(
+      """CREATE UNIQUE INDEX IF NOT EXISTS unique_employee_id
+         ON users(employee_id COLLATE NOCASE)
+         WHERE employee_id IS NOT NULL AND TRIM(employee_id) != ''"""
+  )
 
   cursor.execute("""
       CREATE TABLE IF NOT EXISTS activity_history (
@@ -507,6 +532,16 @@ def hash_password(password, salt=None):
   return salt_bytes.hex(), password_hash.hex()
 
 
+def normalize_employee_id(value):
+  """Normalize school-issued employee IDs such as EMP001."""
+  return re.sub(r"\s+", "", str(value or "")).upper()
+
+
+def valid_employee_id(value):
+  """Accept the school's EMP followed by at least three digits format."""
+  return bool(re.fullmatch(r"EMP\d{3,}", normalize_employee_id(value)))
+
+
 def verify_password(password, saved_salt, saved_hash):
   """Verify a password against its saved salt and hash."""
   try:
@@ -594,6 +629,8 @@ def admin_dashboard():
       st.markdown(f"**{name}** · {email} · Principal Admin (fixed account)")
       continue
     detail=f"{role} · {status}"
+    if role in ("Nurse", "Teacher"):
+      detail += f" · Employee ID: {emp_id or 'Needs correction'}"
     if role == "Teacher":
       detail += f" · Grade {grade}{section}"
     st.markdown(f"**{name}** · {email} · {detail}")
@@ -621,7 +658,10 @@ def admin_dashboard():
     grade=None
     section=None
     if role in ("Nurse","Teacher"):
-      employee_id=st.text_input("Employee ID")
+      employee_id=st.text_input(
+          "Employee ID", placeholder="e.g. EMP001",
+          help="Enter a unique Employee ID issued by the school."
+      )
     if role=="Teacher":
       c1,c2=st.columns(2)
       with c1:
@@ -638,11 +678,23 @@ def admin_dashboard():
       st.error("Enter a name, email, and password of at least 8 characters.")
     elif role in ("Nurse","Teacher") and not employee_id.strip():
       st.error("Employee ID is required.")
+    elif role in ("Nurse","Teacher") and not valid_employee_id(employee_id):
+      st.error("Use the school Employee ID format, for example EMP001.")
     else:
+      clean_employee_id = normalize_employee_id(employee_id)
+      employee_id_taken = (
+          conn.execute(
+              "SELECT 1 FROM users WHERE employee_id = ? COLLATE NOCASE",
+              (clean_employee_id,)
+          ).fetchone()
+          if role in ("Nurse","Teacher") else None
+      )
       linked=True
       if role=="Parent":
         linked=conn.execute("SELECT 1 FROM students WHERE id_number=? COLLATE NOCASE",(child_id.strip().lower(),)).fetchone()
-      if not linked:
+      if employee_id_taken:
+        st.error("That Employee ID is already linked to another account.")
+      elif not linked:
         st.error("Student ID not found.")
       else:
         salt,pw_hash=hash_password(password)
@@ -654,7 +706,7 @@ def admin_dashboard():
                  VALUES (?,?,?,?,?,?,?,?,?,'Approved')""",
               (name.strip(),clean_email,role,salt,pw_hash,
                child_id.strip().lower() if role=="Parent" else None,
-               employee_id.strip() or None,grade,section)
+               clean_employee_id or None,grade,section)
           )
           conn.commit()
           log_activity("Account created by Admin", f"Created approved {role} account: {clean_email}")
@@ -745,6 +797,7 @@ def login_page():
             if account[2] == "Parent":
               st.session_state.user["child_id"] = account[5]
             elif account[2] == "Teacher":
+              st.session_state.user["employee_id"] = account[8]
               st.session_state.user["assigned_grade"] = account[6]
               st.session_state.user["assigned_section"] = account[7]
             elif account[2] == "Nurse":
@@ -785,7 +838,7 @@ def login_page():
         elif register_role in ("Nurse", "Teacher"):
           employee_id = st.text_input(
               "Employee ID",
-              placeholder="Enter your school-issued employee ID"
+              placeholder="e.g. EMP001 (provided by your school)"
           )
           if register_role == "Teacher":
             class_col, section_col = st.columns(2)
@@ -802,12 +855,14 @@ def login_page():
         clean_name = full_name.strip()
         clean_email = register_email.strip().lower()
         clean_child_id = child_id.strip().lower() if register_role == "Parent" else None
-        clean_employee_id = employee_id.strip() if register_role in ("Nurse", "Teacher") else None
+        clean_employee_id = normalize_employee_id(employee_id) if register_role in ("Nurse", "Teacher") else None
 
         if not clean_name or not clean_email or not new_password or not confirm_password:
           st.error("Please complete all required fields.")
         elif register_role in ("Nurse", "Teacher") and not clean_employee_id:
           st.error("Employee ID is required for Nurses and Teachers.")
+        elif register_role in ("Nurse", "Teacher") and not valid_employee_id(clean_employee_id):
+          st.error("Enter your school-issued Employee ID, for example EMP001.")
         elif not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", clean_email):
           st.error("Enter a valid email address.")
         elif len(new_password) < 8:
@@ -820,6 +875,12 @@ def login_page():
               "SELECT 1 FROM users WHERE email = ? COLLATE NOCASE",
               (clean_email,)
           ).fetchone()
+          existing_employee_id = None
+          if register_role in ("Nurse", "Teacher"):
+            existing_employee_id = conn.execute(
+                "SELECT 1 FROM users WHERE employee_id = ? COLLATE NOCASE",
+                (clean_employee_id,)
+            ).fetchone()
           linked_student = None
           if register_role == "Parent":
             linked_student = conn.execute(
@@ -829,6 +890,8 @@ def login_page():
 
           if existing_account:
             st.error("An account with this email already exists. Please sign in instead.")
+          elif existing_employee_id:
+            st.error("That Employee ID is already registered. Contact the School Principal if this is your ID.")
           elif register_role == "Parent" and not linked_student:
             st.error("Student ID not found. Check the ID provided by your school.")
           else:
