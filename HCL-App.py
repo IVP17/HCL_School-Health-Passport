@@ -43,6 +43,27 @@ def log_activity(action, details="", actor=None):
   conn.close()
 
 
+def clear_user_inbox(conn, message_rows):
+  """Hide the supplied messages from the current account only."""
+  user_email = str((st.session_state.get("user") or {}).get("email", "")).strip().lower()
+  if not user_email:
+    st.error("Your account could not be identified. Please sign in again.")
+    return False
+
+  message_ids = [row[0] for row in message_rows]
+  if not message_ids:
+    return False
+
+  conn.executemany(
+      """INSERT OR IGNORE INTO hidden_inbox_messages (message_id, user_email)
+         VALUES (?, ?)""",
+      [(message_id, user_email) for message_id in message_ids]
+  )
+  conn.commit()
+  log_activity("Inbox history cleared", f"Cleared {len(message_ids)} message(s) from this account's inbox")
+  return True
+
+
 def generate_roll_id(roll_number, grade, section):
   """Generates ID: gj_roll no._class.section (e.g., 'gj_14_6d')"""
   return f"gj_{str(roll_number).strip()}_{grade}{section.lower()}"
@@ -112,6 +133,16 @@ def init_db():
             date TEXT
         )
     """)
+
+  # Store per-account inbox hiding, so clearing one inbox never removes
+  # messages from another recipient's inbox.
+  cursor.execute("""
+      CREATE TABLE IF NOT EXISTS hidden_inbox_messages (
+          message_id INTEGER NOT NULL,
+          user_email TEXT NOT NULL COLLATE NOCASE,
+          PRIMARY KEY (message_id, user_email)
+      )
+  """)
 
   # One-time refresh of the starter student records.
   # The previous version only inserted sample students when the table was empty,
@@ -794,23 +825,32 @@ def admin_dashboard():
 
   principal_messages = conn.execute(
       """
-      SELECT sender, grade, section, student_name, message, date
-      FROM messages
-      WHERE target = 'Principal'
-      ORDER BY id DESC
-      """
+      SELECT m.id, m.sender, m.grade, m.section, m.student_name, m.message, m.date
+      FROM messages AS m
+      WHERE m.target = 'Principal'
+        AND NOT EXISTS (
+            SELECT 1 FROM hidden_inbox_messages AS h
+            WHERE h.message_id = m.id AND h.user_email = ?
+        )
+      ORDER BY m.id DESC
+      """,
+      (st.session_state.user.get("email", "").lower(),)
   ).fetchall()
 
   if principal_messages:
+    if st.button("🗑️ Clear Inbox History", key="admin_clear_inbox"):
+      if clear_user_inbox(conn, principal_messages):
+        st.success("Your inbox history has been cleared.")
+        st.rerun()
     for message in principal_messages:
       with st.container():
         st.markdown(
-            f"**From:** {message[0]} · "
-            f"**Grade:** {message[1]}{message[2]} · "
-            f"**Student:** {message[3]} · "
-            f"**Date:** {message[5]}"
+            f"**From:** {message[1]} · "
+            f"**Grade:** {message[2]}{message[3]} · "
+            f"**Student:** {message[4]} · "
+            f"**Date:** {message[6]}"
         )
-        st.markdown(f"**Message:** {message[4]}")
+        st.markdown(f"**Message:** {message[5]}")
         st.divider()
   else:
     st.info("No messages from Nurses or Teachers yet.")
@@ -1304,22 +1344,31 @@ def nurse_dashboard():
     st.subheader("Inbox")
     nurse_messages = conn.execute(
         """
-        SELECT sender, grade, section, target, student_name, message, date
-        FROM messages
-        WHERE target IN ('Nurse', 'All')
-        ORDER BY id DESC
-        """
+        SELECT m.id, m.sender, m.grade, m.section, m.target, m.student_name, m.message, m.date
+        FROM messages AS m
+        WHERE m.target IN ('Nurse', 'All')
+          AND NOT EXISTS (
+              SELECT 1 FROM hidden_inbox_messages AS h
+              WHERE h.message_id = m.id AND h.user_email = ?
+          )
+        ORDER BY m.id DESC
+        """,
+        (st.session_state.user.get("email", "").lower(),)
     ).fetchall()
 
     if nurse_messages:
+      if st.button("🗑️ Clear Inbox History", key="nurse_clear_inbox"):
+        if clear_user_inbox(conn, nurse_messages):
+          st.success("Your inbox history has been cleared.")
+          st.rerun()
       for message in nurse_messages:
         with st.container():
           st.markdown(
-              f"**From:** {message[0]} · **Grade:** {message[1]}{message[2]} "
-              f"· **Student:** {message[4]} · **Date:** {message[6]}"
+              f"**From:** {message[1]} · **Grade:** {message[2]}{message[3]} "
+              f"· **Student:** {message[5]} · **Date:** {message[7]}"
           )
-          st.markdown(f"**Message:** {message[5]}")
-          st.caption(f"Sent to: {message[3]}")
+          st.markdown(f"**Message:** {message[6]}")
+          st.caption(f"Sent to: {message[4]}")
           st.divider()
     else:
       st.info("Your inbox is empty.")
@@ -1420,23 +1469,32 @@ def teacher_dashboard():
     st.subheader(f"Inbox — Grade {grade}{section}")
     teacher_messages = conn.execute(
         """
-        SELECT sender, target, student_name, message, date
-        FROM messages
-        WHERE grade = ? AND section = ? AND target IN ('Teacher', 'All')
-        ORDER BY id DESC
+        SELECT m.id, m.sender, m.target, m.student_name, m.message, m.date
+        FROM messages AS m
+        WHERE m.grade = ? AND m.section = ?
+          AND m.target IN ('Teacher', 'All')
+          AND NOT EXISTS (
+              SELECT 1 FROM hidden_inbox_messages AS h
+              WHERE h.message_id = m.id AND h.user_email = ?
+          )
+        ORDER BY m.id DESC
         """,
-        (grade, section)
+        (grade, section, st.session_state.user.get("email", "").lower())
     ).fetchall()
 
     if teacher_messages:
+      if st.button("🗑️ Clear Inbox History", key="teacher_clear_inbox"):
+        if clear_user_inbox(conn, teacher_messages):
+          st.success("Your inbox history has been cleared.")
+          st.rerun()
       for message in teacher_messages:
         with st.container():
           st.markdown(
-              f"**From:** {message[0]} · **Student:** {message[2]} "
-              f"· **Date:** {message[4]}"
+              f"**From:** {message[1]} · **Student:** {message[3]} "
+              f"· **Date:** {message[5]}"
           )
-          st.markdown(f"**Message:** {message[3]}")
-          st.caption(f"Sent to: {message[1]}")
+          st.markdown(f"**Message:** {message[4]}")
+          st.caption(f"Sent to: {message[2]}")
           st.divider()
     else:
       st.info("Your inbox is empty.")
@@ -1506,18 +1564,28 @@ def parent_dashboard():
     st.markdown("### 📨 Messages & Updates for This Child")
     parent_messages = conn.execute(
         """
-        SELECT sender, target, message, date 
-        FROM messages 
-        WHERE student_name = ? AND (target = 'Parent' OR target = 'All')
+        SELECT m.id, m.sender, m.target, m.message, m.date
+        FROM messages AS m
+        WHERE m.student_name = ?
+          AND (m.target = 'Parent' OR m.target = 'All')
+          AND NOT EXISTS (
+              SELECT 1 FROM hidden_inbox_messages AS h
+              WHERE h.message_id = m.id AND h.user_email = ?
+          )
+        ORDER BY m.id DESC
         """,
-        (student[3],)
+        (student[3], st.session_state.user.get("email", "").lower())
     ).fetchall()
 
     if parent_messages:
+      if st.button("🗑️ Clear Inbox History", key="parent_clear_inbox"):
+        if clear_user_inbox(conn, parent_messages):
+          st.success("Your inbox history has been cleared.")
+          st.rerun()
       for pm in parent_messages:
         st.markdown(f"""
-            **From:** {pm[0]} | **Audience:** {pm[1]} | **Date:** {pm[3]}  
-            **Message:** {pm[2]}
+            **From:** {pm[1]} | **Audience:** {pm[2]} | **Date:** {pm[4]}  
+            **Message:** {pm[3]}
             """)
     else:
       st.info("No messages for this student yet.")
