@@ -790,6 +790,32 @@ def admin_dashboard():
           st.error("That email address is already registered.")
 
   st.divider()
+  st.subheader("📨 Principal Inbox — Messages from Nurses and Teachers")
+
+  principal_messages = conn.execute(
+      """
+      SELECT sender, grade, section, student_name, message, date
+      FROM messages
+      WHERE target = 'Principal'
+      ORDER BY id DESC
+      """
+  ).fetchall()
+
+  if principal_messages:
+    for message in principal_messages:
+      with st.container():
+        st.markdown(
+            f"**From:** {message[0]} · "
+            f"**Grade:** {message[1]}{message[2]} · "
+            f"**Student:** {message[3]} · "
+            f"**Date:** {message[5]}"
+        )
+        st.markdown(f"**Message:** {message[4]}")
+        st.divider()
+  else:
+    st.info("No messages from Nurses or Teachers yet.")
+
+  st.divider()
   st.subheader("📜 Activity History / Audit Log")
   st.caption("A record of account and app actions. Passwords and medical details are never recorded here.")
   history_rows = conn.execute(
@@ -1312,7 +1338,9 @@ def nurse_dashboard():
             "Select Student",
             student_names if student_names else ["No students available"]
         )
-        target_audience = st.selectbox("Send To", ["Parent", "Teacher", "All"])
+        target_audience = st.selectbox(
+            "Send To", ["Parent", "Teacher", "Principal", "All"]
+        )
         msg_text = st.text_area("Message / Note")
         if st.form_submit_button("Send Message"):
           if target_student == "No students available":
@@ -1425,7 +1453,9 @@ def teacher_dashboard():
             "Select Student",
             student_names if student_names else ["No students available"]
         )
-        target_audience = st.selectbox("Send To", ["Nurse", "Parent", "All"])
+        target_audience = st.selectbox(
+            "Send To", ["Nurse", "Parent", "Principal", "All"]
+        )
         msg_text = st.text_area("Message / Note")
         if st.form_submit_button("Send Message"):
           if target_student == "No students available":
